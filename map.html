@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Darveniza's Tropical Fruit — Paddock Map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<style>
+  html, body { margin:0; padding:0; height:100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+  #map { position:absolute; top:0; bottom:0; left:0; right:0; }
+  #topbar {
+    position:absolute; top:0; left:0; right:0; z-index:1000;
+    background:#1b3a2b; color:#fff; padding:8px 14px; display:flex; align-items:center; gap:14px;
+    box-shadow:0 2px 6px rgba(0,0,0,.25); flex-wrap:wrap;
+  }
+  #topbar a.back { color:#cfe8d8; text-decoration:none; font-size:14px; white-space:nowrap; }
+  #topbar h1 { font-size:16px; margin:0; font-weight:600; white-space:nowrap; }
+  #controls { display:flex; align-items:center; gap:12px; margin-left:auto; flex-wrap:wrap; }
+  #controls label { font-size:13px; display:flex; align-items:center; gap:5px; white-space:nowrap; cursor:pointer; }
+  #controls select { font-size:13px; padding:3px 6px; border-radius:4px; border:none; }
+  #legend {
+    position:absolute; bottom:20px; left:10px; z-index:1000;
+    background:rgba(255,255,255,.95); padding:10px 12px; border-radius:8px;
+    box-shadow:0 2px 8px rgba(0,0,0,.25); font-size:12px; max-width:220px;
+  }
+  #legend h3 { margin:0 0 6px; font-size:12px; text-transform:uppercase; letter-spacing:.03em; color:#444; }
+  .legend-row { display:flex; align-items:center; gap:6px; margin:3px 0; }
+  .swatch { width:14px; height:14px; border-radius:3px; flex-shrink:0; border:1px solid rgba(0,0,0,.2); }
+  .grad-bar { width:120px; height:10px; border-radius:4px; background:linear-gradient(to right, #e8f5e9, #1b5e20); }
+  #panel {
+    position:absolute; top:52px; right:0; bottom:0; width:340px; max-width:90vw;
+    background:#fff; z-index:1000; box-shadow:-2px 0 10px rgba(0,0,0,.2);
+    overflow-y:auto; padding:16px; transform:translateX(100%); transition:transform .2s ease;
+  }
+  #panel.open { transform:translateX(0); }
+  #panel h2 { margin:0 0 4px; font-size:18px; }
+  #panel .sub { color:#777; font-size:12px; margin-bottom:12px; }
+  #panel .close { position:absolute; top:10px; right:12px; cursor:pointer; font-size:20px; color:#888; background:none; border:none; }
+  #panel table { width:100%; border-collapse:collapse; font-size:12px; margin:8px 0; }
+  #panel table td, #panel table th { padding:3px 4px; border-bottom:1px solid #eee; text-align:left; }
+  #panel h4 { font-size:12px; text-transform:uppercase; color:#666; margin:14px 0 4px; }
+  .icon-emoji { font-size:20px; text-align:center; line-height:26px; }
+  .leaflet-popup-content { font-size:13px; }
+  .leaflet-popup-content a { color:#1b6e3c; }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <a class="back" href="index.html">&larr; Springboard</a>
+  <h1>Darveniza's Tropical Fruit — Paddock Map</h1>
+  <div id="controls">
+    <label>View:
+      <select id="colorMode">
+        <option value="crop">Crop type</option>
+        <option value="N">Fert — N</option>
+        <option value="P">Fert — P</option>
+        <option value="K">Fert — K</option>
+        <option value="S">Fert — S</option>
+        <option value="NPKS">Fert — Total NPKS</option>
+        <option value="spray">Spray recency</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="showJobs" checked> 🛠️ Jobs</label>
+    <label><input type="checkbox" id="showMobs" checked> 🐮 Mobs</label>
+  </div>
+</div>
+
+<div id="map"></div>
+<div id="legend"></div>
+<div id="panel">
+  <button class="close" onclick="closePanel()">&times;</button>
+  <div id="panel-body"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const JOB_BOARD_URL = "https://airtable.com/appqwWfRyJQ72H6On/pagI2bvE82Zn1TL4r";
+const ROTATION_LOG_URL = "https://airtable.com/appqwWfRyJQ72H6On/pagIyW2spvkzuMO1t";
+
+let map, geoLayer, jobLayerGroup, mobLayerGroup, paddockData, liveData;
+let colorMode = 'crop';
+const paddockLayers = {}; // paddock_id -> leaflet layer (for centroid lookup)
+
+const CROP_COLORS = {
+  banana:'#f5c518', papaya:'#ff8c42', passion:'#7b3f9e', pumpkin:'#d2691e',
+  cane:'#4caf50', fallow:'#bdbdbd', cattle:'#8d6e63', default:'#9e9e9e'
+};
+function cropColor(crop){
+  if(!crop) return CROP_COLORS.default;
+  const c = crop.toLowerCase();
+  if(c.includes('banana')) return CROP_COLORS.banana;
+  if(c.includes('papaya')) return CROP_COLORS.papaya;
+  if(c.includes('passion')) return CROP_COLORS.passion;
+  if(c.includes('pumpkin')) return CROP_COLORS.pumpkin;
+  if(c.includes('cane')) return CROP_COLORS.cane;
+  if(c.includes('fallow')) return CROP_COLORS.fallow;
+  if(c.includes('cattle')) return CROP_COLORS.cattle;
+  return CROP_COLORS.default;
+}
+function fertColorScale(value, max){
+  if(value == null || !max) return '#e0e0e0';
+  const t = Math.min(value/max, 1);
+  const start=[232,245,233], end=[27,94,32];
+  const rgb = start.map((s,i)=>Math.round(s+(end[i]-s)*t));
+  return `rgb(${rgb.join(',')})`;
+}
+function daysSince(dateStr){
+  if(!dateStr) return null;
+  const d = new Date(dateStr);
+  if(isNaN(d)) return null;
+  return Math.floor((Date.now()-d.getTime())/86400000);
+}
+function sprayColor(dateStr){
+  const days = daysSince(dateStr);
+  if(days == null) return '#e0e0e0';
+  if(days <= 7) return '#e53935';
+  if(days <= 30) return '#fb8c00';
+  return '#43a047';
+}
+function maxFertValue(mode){
+  let max = 0;
+  paddockData.features.forEach(f=>{
+    if(f.properties.feature_type !== 'paddock') return;
+    let v = mode==='NPKS' ? f.properties.fert_total_all_kg_ha
+      : (f.properties.fert_totals_kg_ha ? f.properties.fert_totals_kg_ha[mode] : null);
+    if(v!=null && v>max) max=v;
+  });
+  return max;
+}
+function styleFor(feature){
+  const p = feature.properties;
+  if(p.feature_type === 'infrastructure'){
+    return {color:'#616161', weight:1, dashArray:'4,3', fillColor:'#9e9e9e', fillOpacity:0.15};
+  }
+  let fill = '#9e9e9e';
+  if(colorMode === 'crop') fill = cropColor(p.current_crop);
+  else if(['N','P','K','S'].includes(colorMode)) fill = fertColorScale(p.fert_totals_kg_ha ? p.fert_totals_kg_ha[colorMode] : null, maxFertValue(colorMode));
+  else if(colorMode === 'NPKS') fill = fertColorScale(p.fert_total_all_kg_ha, maxFertValue('NPKS'));
+  else if(colorMode === 'spray') fill = sprayColor(p.spray_last_date);
+  return {color:'#333', weight:1.5, fillColor:fill, fillOpacity:0.65};
+}
+
+function fmt(n){ return (n==null || isNaN(n)) ? '—' : Number(n).toFixed(1); }
+
+function openPanel(feature){
+  const p = feature.properties;
+  const panel = document.getElementById('panel');
+  const body = document.getElementById('panel-body');
+  if(p.feature_type === 'infrastructure'){
+    body.innerHTML = `<h2>${p.paddock_id}</h2><div class="sub">Farm feature (not a crop block)</div>`;
+  } else {
+    let html = `<h2>Block ${p.paddock_id}</h2><div class="sub">${fmt(p.true_area_ha)} ha &middot; ${p.current_crop || 'Unknown crop'} &middot; ${p.current_status || ''}</div>`;
+    html += `<h4>Fertiliser (kg/ha totals)</h4>`;
+    const ft = p.fert_totals_kg_ha || {};
+    html += `<table><tr><th>N</th><th>P</th><th>K</th><th>S</th></tr><tr><td>${fmt(ft.N)}</td><td>${fmt(ft.P)}</td><td>${fmt(ft.K)}</td><td>${fmt(ft.S)}</td></tr></table>`;
+    html += `<div class="sub">Last applied: ${p.fert_last_date || '—'} (${p.fert_count||0} applications)</div>`;
+    html += `<h4>Spray</h4><div class="sub">Last sprayed: ${p.spray_last_date || 'No record'} (${p.spray_count||0} applications)</div>`;
+    const jobs = (liveData.jobs||[]).filter(j=>j.paddock_id===p.paddock_id);
+    if(jobs.length){
+      html += `<h4>🛠️ Open Jobs</h4><ul>`;
+      jobs.forEach(j=> html += `<li>${j.job} — ${j.priority||''} ${j.due?('(due '+j.due+')'):''}</li>`);
+      html += `</ul><div class="sub"><a href="${JOB_BOARD_URL}" target="_blank">Open Job Board →</a></div>`;
+    }
+    const mobs = (liveData.mobs||[]).filter(m=>m.paddock_id===p.paddock_id);
+    if(mobs.length){
+      html += `<h4>🐮 Current Mob</h4><ul>`;
+      mobs.forEach(m=> html += `<li>${m.mob} — since ${m.since}</li>`);
+      html += `</ul><div class="sub"><a href="${ROTATION_LOG_URL}" target="_blank">Open Rotation Log →</a></div>`;
+    }
+    body.innerHTML = html;
+  }
+  panel.classList.add('open');
+}
+function closePanel(){ document.getElementById('panel').classList.remove('open'); }
+
+function rebuildLegend(){
+  const legend = document.getElementById('legend');
+  if(colorMode === 'crop'){
+    legend.innerHTML = `<h3>Crop type</h3>` + Object.entries({Banana:'banana',Papaya:'papaya',Passionfruit:'passion',Pumpkin:'pumpkin',Cane:'cane',Fallow:'fallow',Cattle:'cattle'})
+      .map(([label,key])=>`<div class="legend-row"><div class="swatch" style="background:${CROP_COLORS[key]}"></div>${label}</div>`).join('');
+  } else if(colorMode === 'spray'){
+    legend.innerHTML = `<h3>Spray recency</h3>
+      <div class="legend-row"><div class="swatch" style="background:#e53935"></div>≤7 days</div>
+      <div class="legend-row"><div class="swatch" style="background:#fb8c00"></div>8–30 days</div>
+      <div class="legend-row"><div class="swatch" style="background:#43a047"></div>30+ days</div>
+      <div class="legend-row"><div class="swatch" style="background:#e0e0e0"></div>No record</div>`;
+  } else {
+    const label = colorMode === 'NPKS' ? 'Total NPKS (kg/ha)' : `Fert — ${colorMode} (kg/ha)`;
+    legend.innerHTML = `<h3>${label}</h3><div class="grad-bar"></div><div class="legend-row" style="justify-content:space-between;width:120px"><span>Low</span><span>High</span></div>`;
+  }
+}
+
+function centroidOf(paddock_id){
+  const layer = paddockLayers[paddock_id];
+  if(!layer) return null;
+  return layer.getBounds().getCenter();
+}
+
+function rebuildIconLayers(){
+  jobLayerGroup.clearLayers();
+  mobLayerGroup.clearLayers();
+  const jobsByPaddock = {};
+  (liveData.jobs||[]).forEach(j=>{ (jobsByPaddock[j.paddock_id] = jobsByPaddock[j.paddock_id]||[]).push(j); });
+  Object.entries(jobsByPaddock).forEach(([pid, jobs])=>{
+    const c = centroidOf(pid);
+    if(!c) return;
+    const icon = L.divIcon({className:'icon-emoji', html:'🛠️', iconSize:[26,26]});
+    const m = L.marker(c, {icon});
+    const list = jobs.map(j=>`${j.job}${j.priority?(' — '+j.priority):''}${j.due?(' (due '+j.due+')'):''}`).join('<br>');
+    m.bindPopup(`<b>Block ${pid} — Jobs</b><br>${list}<br><a href="${JOB_BOARD_URL}" target="_blank">Open Job Board →</a>`);
+    jobLayerGroup.addLayer(m);
+  });
+  const mobsByPaddock = {};
+  (liveData.mobs||[]).forEach(mo=>{ (mobsByPaddock[mo.paddock_id] = mobsByPaddock[mo.paddock_id]||[]).push(mo); });
+  Object.entries(mobsByPaddock).forEach(([pid, mobs])=>{
+    const c = centroidOf(pid);
+    if(!c) return;
+    const icon = L.divIcon({className:'icon-emoji', html:'🐮', iconSize:[26,26]});
+    const m = L.marker(c, {icon});
+    const list = mobs.map(mo=>`${mo.mob} — since ${mo.since}`).join('<br>');
+    m.bindPopup(`<b>Block ${pid} — Mob</b><br>${list}<br><a href="${ROTATION_LOG_URL}" target="_blank">Open Rotation Log →</a>`);
+    mobLayerGroup.addLayer(m);
+  });
+}
+
+function init(){
+  map = L.map('map', {zoomSnap:0.25});
+  const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution:'Esri World Imagery', maxZoom:20
+  }).addTo(map);
+  const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution:'&copy; OpenStreetMap contributors', maxZoom:19
+  });
+  L.control.layers({'Satellite':satellite, 'Street':street}).addTo(map);
+
+  jobLayerGroup = L.layerGroup().addTo(map);
+  mobLayerGroup = L.layerGroup().addTo(map);
+
+  Promise.all([
+    fetch('paddocks.geojson').then(r=>r.json()),
+    fetch('live-data.json').then(r=>r.json())
+  ]).then(([geo, live])=>{
+    paddockData = geo;
+    liveData = live;
+    geoLayer = L.geoJSON(geo, {
+      style: styleFor,
+      onEachFeature: (feature, layer)=>{
+        paddockLayers[feature.properties.paddock_id] = layer;
+        const p = feature.properties;
+        const tipLabel = p.paddock_id + (p.true_area_ha!=null ? ` (${p.true_area_ha.toFixed(2)} ha)` : '');
+        layer.bindTooltip(tipLabel, {direction:'center'});
+        layer.on('mouseover', ()=> layer.setStyle({weight:3}));
+        layer.on('mouseout', ()=> layer.setStyle({weight: p.feature_type==='infrastructure'?1:1.5}));
+        layer.on('click', ()=> openPanel(feature));
+      }
+    }).addTo(map);
+    map.fitBounds(geoLayer.getBounds(), {padding:[30,30]});
+    rebuildLegend();
+    rebuildIconLayers();
+  }).catch(err=>{
+    document.getElementById('map').insertAdjacentHTML('afterbegin',
+      `<div style="padding:40px;font-family:sans-serif;color:#900">Could not load map data (paddocks.geojson / live-data.json). ${err}</div>`);
+  });
+
+  document.getElementById('colorMode').addEventListener('change', (e)=>{
+    colorMode = e.target.value;
+    geoLayer.eachLayer(l=> l.setStyle(styleFor(l.feature)));
+    rebuildLegend();
+  });
+  document.getElementById('showJobs').addEventListener('change', (e)=>{
+    if(e.target.checked) map.addLayer(jobLayerGroup); else map.removeLayer(jobLayerGroup);
+  });
+  document.getElementById('showMobs').addEventListener('change', (e)=>{
+    if(e.target.checked) map.addLayer(mobLayerGroup); else map.removeLayer(mobLayerGroup);
+  });
+}
+init();
+</script>
+</body>
+</html>

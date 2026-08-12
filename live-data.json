@@ -1,0 +1,12 @@
+{
+  "generated": "2026-08-12T00:00:00+10:00",
+  "jobs": [],
+  "mobs": [
+    {
+      "paddock_id": "House",
+      "mob": "Weiner 1",
+      "since": "2025-07-31",
+      "notes": "Ongoing as of last Excel export - no later move logged. Note: House is the homestead, not a mapped paddock, so this won't show an icon on the map."
+    }
+  ]
+}
