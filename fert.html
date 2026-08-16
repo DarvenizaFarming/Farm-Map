@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fertilise — Darveniza's Tropical Fruit</title>
+<style>
+  * { box-sizing:border-box; }
+  html,body { margin:0; padding:0; background:#f4f1ea; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; color:#1b3a2b; }
+  header { background:#1b3a2b; color:#fff; padding:16px 18px; display:flex; align-items:center; gap:12px; }
+  header a { color:#cfe8d8; text-decoration:none; font-size:14px; }
+  header h1 { font-size:17px; margin:0; }
+  main { max-width:520px; margin:0 auto; padding:18px 16px 60px; }
+  label { display:block; font-weight:600; font-size:13px; margin:18px 0 6px; }
+  input[type=date], input[type=number], input[type=text], select, textarea {
+    width:100%; padding:10px 12px; border-radius:10px; border:1px solid #cfd8d2; font-size:15px; background:#fff;
+  }
+  textarea { min-height:70px; resize:vertical; }
+  .checklist { max-height:220px; overflow-y:auto; border:1px solid #cfd8d2; border-radius:10px; background:#fff; padding:6px; }
+  .checkrow { display:flex; align-items:center; gap:10px; padding:8px 6px; border-bottom:1px solid #f0f0ea; font-size:14px; }
+  .checkrow:last-child { border-bottom:none; }
+  .checkrow input { width:18px; height:18px; }
+  .search { margin-bottom:8px; }
+  button.submit {
+    margin-top:26px; width:100%; padding:14px; border:none; border-radius:12px; background:#1b3a2b; color:#fff;
+    font-size:16px; font-weight:600;
+  }
+  button.submit:disabled { opacity:.5; }
+  .hint { font-size:12px; color:#888; margin-top:4px; }
+  .loading { padding:40px; text-align:center; color:#888; }
+</style>
+</head>
+<body>
+<header>
+  <a href="index.html">&larr;</a>
+  <h1>🌱 Fertilise</h1>
+</header>
+<main id="app"><div class="loading">Loading…</div></main>
+
+<script src="app.js"></script>
+<script>
+if (APP.checkPin()) {
+  (async function () {
+    const app = document.getElementById("app");
+    try {
+      const [blocks, products] = await Promise.all([
+        APP.list(APP.TABLES.blocks, { "fields[]": "Block", "sort[0][field]": "Block", "sort[0][direction]": "asc" }),
+        APP.list(APP.TABLES.products, { filterByFormula: "{Category}='Fertiliser'" })
+      ]);
+
+      app.innerHTML = "";
+
+      const form = document.createElement("form");
+
+      const dateLabel = APP.el("label", { text: "Date" });
+      const dateInput = APP.el("input", { type: "date", value: APP.todayISO() });
+      form.appendChild(dateLabel); form.appendChild(dateInput);
+
+      form.appendChild(APP.el("label", { text: "Block(s)" }));
+      const search = APP.el("input", { type: "text", class: "search", placeholder: "Search blocks…" });
+      form.appendChild(search);
+      const checklist = APP.el("div", { class: "checklist" });
+      blocks.forEach(b => {
+        const row = APP.el("label", { class: "checkrow", "data-name": (b.fields.Block || "").toLowerCase() });
+        const cb = APP.el("input", { type: "checkbox", value: b.id });
+        row.appendChild(cb);
+        row.appendChild(document.createTextNode(b.fields.Block || "(unnamed)"));
+        checklist.appendChild(row);
+      });
+      form.appendChild(checklist);
+      search.addEventListener("input", () => {
+        const q = search.value.toLowerCase();
+        checklist.querySelectorAll(".checkrow").forEach(r => {
+          r.style.display = r.getAttribute("data-name").includes(q) ? "flex" : "none";
+        });
+      });
+
+      form.appendChild(APP.el("label", { text: "Product" }));
+      const productSelect = APP.el("select");
+      productSelect.appendChild(APP.el("option", { value: "", text: "— select product —" }));
+      products.forEach(p => productSelect.appendChild(APP.el("option", { value: p.id, text: p.fields.Product || "(unnamed)" })));
+      form.appendChild(productSelect);
+
+      form.appendChild(APP.el("label", { text: "Method" }));
+      const methodSelect = APP.el("select");
+      ["BANDED", "HAND", "FERTIGATED"].forEach(m => methodSelect.appendChild(APP.el("option", { value: m, text: m })));
+      form.appendChild(methodSelect);
+
+      form.appendChild(APP.el("label", { text: "Total Kg Applied" }));
+      const kgInput = APP.el("input", { type: "number", step: "0.1", min: "0", placeholder: "e.g. 250" });
+      form.appendChild(kgInput);
+      form.appendChild(APP.el("div", { class: "hint", text: "Total across all selected blocks - it'll be split out per block automatically." }));
+
+      form.appendChild(APP.el("label", { text: "Notes (optional)" }));
+      const notes = APP.el("textarea");
+      form.appendChild(notes);
+
+      const submitBtn = APP.el("button", { class: "submit", type: "submit", text: "Log fertiliser application" });
+      form.appendChild(submitBtn);
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const selectedBlocks = Array.from(checklist.querySelectorAll("input:checked")).map(cb => cb.value);
+        if (!selectedBlocks.length) { APP.toast("Pick at least one block", true); return; }
+        if (!productSelect.value) { APP.toast("Pick a product", true); return; }
+        if (!kgInput.value) { APP.toast("Enter total kg applied", true); return; }
+        submitBtn.disabled = true; submitBtn.textContent = "Saving…";
+        try {
+          await APP.createRecords(APP.TABLES.fertLog, [{
+            fields: {
+              "Date": dateInput.value,
+              "Blocks": selectedBlocks,
+              "Product": [productSelect.value],
+              "Method": methodSelect.value,
+              "Total Kg Applied": parseFloat(kgInput.value),
+              "Notes": notes.value
+            }
+          }]);
+          APP.toast("Saved ✓");
+          form.reset();
+          checklist.querySelectorAll("input:checked").forEach(cb => cb.checked = false);
+          dateInput.value = APP.todayISO();
+        } catch (err) {
+          console.error(err);
+          APP.toast("Couldn't save - check connection and try again", true);
+        } finally {
+          submitBtn.disabled = false; submitBtn.textContent = "Log fertiliser application";
+        }
+      });
+
+      app.appendChild(form);
+    } catch (err) {
+      console.error(err);
+      app.innerHTML = '<div class="loading">Couldn\'t load form data. Check your connection and reload.</div>';
+    }
+  })();
+}
+</script>
+</body>
+</html>

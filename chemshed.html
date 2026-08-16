@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chemical Shed — Darveniza's Tropical Fruit</title>
+<style>
+  * { box-sizing:border-box; }
+  html,body { margin:0; padding:0; background:#f4f1ea; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; color:#1b3a2b; }
+  header { background:#1b3a2b; color:#fff; padding:16px 18px; display:flex; align-items:center; gap:12px; }
+  header a { color:#cfe8d8; text-decoration:none; font-size:14px; }
+  header h1 { font-size:17px; margin:0; flex:1; }
+  header button { background:#2e5d43; color:#fff; border:none; border-radius:8px; padding:8px 12px; font-size:13px; }
+  main { max-width:560px; margin:0 auto; padding:16px 16px 60px; }
+  .card { background:#fff; border-radius:12px; padding:14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,.06); }
+  .card .name { font-weight:600; font-size:15px; }
+  .card .meta { font-size:12px; color:#888; margin-top:3px; }
+  .card .row { display:flex; align-items:center; gap:8px; margin-top:10px; }
+  .card input[type=number] { width:70px; padding:8px; border-radius:8px; border:1px solid #cfd8d2; font-size:13px; }
+  .card select { flex:1; padding:8px; border-radius:8px; border:1px solid #cfd8d2; font-size:13px; }
+  .card button.clear { background:#c62828; color:#fff; border:none; border-radius:8px; padding:8px 12px; font-size:13px; }
+  .expiring { color:#c62828; font-weight:600; }
+  .loading, .empty { padding:40px; text-align:center; color:#888; }
+  #addForm { background:#fff; border-radius:14px; padding:16px; margin-bottom:16px; display:none; }
+  #addForm.open { display:block; }
+  #addForm label { display:block; font-weight:600; font-size:13px; margin:12px 0 6px; }
+  #addForm label:first-child { margin-top:0; }
+  #addForm input, #addForm select, #addForm textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid #cfd8d2; font-size:15px; background:#fff; }
+  #addForm button.submit { margin-top:16px; width:100%; padding:12px; border:none; border-radius:12px; background:#1b3a2b; color:#fff; font-size:15px; font-weight:600; }
+  .row2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+</style>
+</head>
+<body>
+<header>
+  <a href="index.html">&larr;</a>
+  <h1>🧪 Chemical Shed</h1>
+  <button id="toggleAdd">+ Add stock</button>
+</header>
+<main>
+  <div id="addForm">
+    <label>Product</label>
+    <select id="newProduct"></select>
+    <label>Batch / DOM No.</label>
+    <input type="text" id="newBatch">
+    <div class="row2">
+      <div><label>Quantity</label><input type="number" step="0.1" id="newQty"></div>
+      <div><label>Unit</label><select id="newUnit"><option value="L">L</option><option value="kg">kg</option></select></div>
+    </div>
+    <label>Expiry date</label>
+    <input type="date" id="newExpiry">
+    <label>Date bought</label>
+    <input type="date" id="newBought">
+    <label>Bought from</label>
+    <input type="text" id="newFrom">
+    <button class="submit" id="addSubmit">Add to shed</button>
+  </div>
+  <div id="list"><div class="loading">Loading…</div></div>
+</main>
+
+<script src="app.js"></script>
+<script>
+if (APP.checkPin()) {
+  (async function () {
+    const listEl = document.getElementById("list");
+    let stock = [], products = [];
+
+    function daysUntil(dateStr) {
+      if (!dateStr) return null;
+      return Math.floor((new Date(dateStr) - new Date()) / 86400000);
+    }
+
+    function render() {
+      const inStock = stock.filter(s => s.fields.Status === "In Stock" || !s.fields.Status);
+      listEl.innerHTML = "";
+      if (!inStock.length) { listEl.innerHTML = '<div class="empty">Nothing in stock.</div>'; return; }
+      inStock.forEach(s => {
+        const card = APP.el("div", { class: "card" });
+        card.appendChild(APP.el("div", { class: "name", text: s.fields["Product — Batch (drag to front)"] || s.fields["Batch/DOM No."] || "(unnamed)" }));
+        const days = daysUntil(s.fields["Expiry Date"]);
+        const meta = APP.el("div", { class: "meta" });
+        meta.innerHTML = `${s.fields.Quantity ?? "?"} ${s.fields.Unit || ""} in stock` +
+          (s.fields["Expiry Date"] ? ` · expires ${s.fields["Expiry Date"]}` + (days != null && days <= 60 ? ` <span class="expiring">(${days}d)</span>` : "") : "");
+        card.appendChild(meta);
+
+        const row = APP.el("div", { class: "row" });
+        const qtyInput = APP.el("input", { type: "number", step: "0.1", value: s.fields.Quantity ?? "" });
+        row.appendChild(qtyInput);
+        const statusSel = APP.el("select");
+        ["In Stock", "Removed", "Empty"].forEach(st => statusSel.appendChild(APP.el("option", { value: st, text: st })));
+        statusSel.value = "In Stock";
+        row.appendChild(statusSel);
+        const btn = APP.el("button", { class: "clear", text: "Update" });
+        btn.addEventListener("click", async () => {
+          btn.disabled = true; btn.textContent = "…";
+          const fields = { "Quantity": parseFloat(qtyInput.value) || 0, "Status": statusSel.value };
+          if (statusSel.value !== "In Stock") fields["Date Removed"] = APP.todayISO();
+          try {
+            await APP.updateRecords(APP.TABLES.chemicalShed, [{ id: s.id, fields }]);
+            s.fields.Quantity = fields.Quantity; s.fields.Status = fields.Status;
+            APP.toast("Updated ✓");
+            render();
+          } catch (err) { console.error(err); APP.toast("Couldn't update", true); }
+          finally { btn.disabled = false; btn.textContent = "Update"; }
+        });
+        row.appendChild(btn);
+        card.appendChild(row);
+        listEl.appendChild(card);
+      });
+    }
+
+    try {
+      [stock, products] = await Promise.all([
+        APP.list(APP.TABLES.chemicalShed),
+        APP.list(APP.TABLES.products, { "sort[0][field]": "Product", "sort[0][direction]": "asc" })
+      ]);
+      render();
+    } catch (err) {
+      console.error(err);
+      listEl.innerHTML = '<div class="empty">Couldn\'t load stock. Check your connection and reload.</div>';
+    }
+
+    const newProductSelect = document.getElementById("newProduct");
+    newProductSelect.appendChild(APP.el("option", { value: "", text: "— select product —" }));
+    products.forEach(p => newProductSelect.appendChild(APP.el("option", { value: p.id, text: p.fields.Product || "(unnamed)" })));
+    document.getElementById("newBought").value = APP.todayISO();
+
+    document.getElementById("toggleAdd").addEventListener("click", () => {
+      document.getElementById("addForm").classList.toggle("open");
+    });
+
+    document.getElementById("addSubmit").addEventListener("click", async () => {
+      const btn = document.getElementById("addSubmit");
+      if (!newProductSelect.value) { APP.toast("Pick a product", true); return; }
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        const res = await APP.createRecords(APP.TABLES.chemicalShed, [{
+          fields: {
+            "Product": [newProductSelect.value],
+            "Batch/DOM No.": document.getElementById("newBatch").value,
+            "Quantity": parseFloat(document.getElementById("newQty").value) || 0,
+            "Unit": document.getElementById("newUnit").value,
+            "Expiry Date": document.getElementById("newExpiry").value || undefined,
+            "Date Bought": document.getElementById("newBought").value || undefined,
+            "Bought From": document.getElementById("newFrom").value,
+            "Status": "In Stock"
+          }
+        }]);
+        stock.push(res.records[0]);
+        APP.toast("Added ✓");
+        document.getElementById("newBatch").value = "";
+        document.getElementById("newQty").value = "";
+        document.getElementById("newExpiry").value = "";
+        document.getElementById("newFrom").value = "";
+        document.getElementById("addForm").classList.remove("open");
+        render();
+      } catch (err) {
+        console.error(err); APP.toast("Couldn't save", true);
+      } finally { btn.disabled = false; btn.textContent = "Add to shed"; }
+    });
+  })();
+}
+</script>
+</body>
+</html>

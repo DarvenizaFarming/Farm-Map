@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Productivity — Darveniza's Tropical Fruit</title>
+<style>
+  * { box-sizing:border-box; }
+  html,body { margin:0; padding:0; background:#f4f1ea; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; color:#1b3a2b; }
+  header { background:#1b3a2b; color:#fff; padding:16px 18px; display:flex; align-items:center; gap:12px; }
+  header a { color:#cfe8d8; text-decoration:none; font-size:14px; }
+  header h1 { font-size:17px; margin:0; }
+  main { max-width:640px; margin:0 auto; padding:16px 16px 60px; }
+  .bignums { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:18px; }
+  .bignum { background:#fff; border-radius:12px; padding:14px 8px; text-align:center; box-shadow:0 2px 6px rgba(0,0,0,.06); }
+  .bignum .val { font-size:20px; font-weight:700; }
+  .bignum .lbl { font-size:11px; color:#888; margin-top:2px; }
+  .chartcard { background:#fff; border-radius:12px; padding:14px; margin-bottom:16px; box-shadow:0 2px 6px rgba(0,0,0,.06); }
+  .chartcard h3 { margin:0 0 10px; font-size:14px; }
+  .loading { padding:60px 20px; text-align:center; color:#888; }
+</style>
+</head>
+<body>
+<header>
+  <a href="index.html">&larr;</a>
+  <h1>📊 Productivity</h1>
+</header>
+<main id="app"><div class="loading">Loading live data — this pulls the whole season, give it a few seconds…</div></main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="app.js"></script>
+<script>
+if (APP.checkPin()) {
+  (async function () {
+    const app = document.getElementById("app");
+    try {
+      const [lines, bagging, picking] = await Promise.all([
+        APP.list(APP.TABLES.consignmentLines, { "fields[]": ["Production Area", "Cartons", "Gross Income", "Variety"] }),
+        APP.list(APP.TABLES.bagging, { "fields[]": ["Week Of", "Bags"] }),
+        APP.list(APP.TABLES.picking, { "fields[]": ["Week Of", "Bunches"] })
+      ]);
+
+      // ---- Aggregate ----
+      let totalCartons = 0, totalIncome = 0;
+      const byCrop = {}, byCropIncome = {}, byVariety = {};
+      lines.forEach(r => {
+        const f = r.fields;
+        const crop = f["Production Area"] || "Unknown";
+        const cartons = f.Cartons || 0;
+        const income = f["Gross Income"] || 0;
+        totalCartons += cartons; totalIncome += income;
+        byCrop[crop] = (byCrop[crop] || 0) + cartons;
+        byCropIncome[crop] = (byCropIncome[crop] || 0) + income;
+        if (f.Variety) byVariety[f.Variety] = (byVariety[f.Variety] || 0) + cartons;
+      });
+      const topVarieties = Object.entries(byVariety).sort((a, b) => b[1] - a[1]).slice(0, 10);
+
+      const bagsByWeek = {}, bunchesByWeek = {};
+      bagging.forEach(r => { const w = r.fields["Week Of"]; if (w) bagsByWeek[w] = (bagsByWeek[w] || 0) + (r.fields.Bags || 0); });
+      picking.forEach(r => { const w = r.fields["Week Of"]; if (w) bunchesByWeek[w] = (bunchesByWeek[w] || 0) + (r.fields.Bunches || 0); });
+      const allWeeks = Array.from(new Set([...Object.keys(bagsByWeek), ...Object.keys(bunchesByWeek)])).sort();
+      const last26 = allWeeks.slice(-26);
+
+      // ---- Render shell ----
+      app.innerHTML = `
+        <div class="bignums">
+          <div class="bignum"><div class="val">${totalCartons.toLocaleString()}</div><div class="lbl">Total cartons</div></div>
+          <div class="bignum"><div class="val">$${Math.round(totalIncome).toLocaleString()}</div><div class="lbl">Recorded income</div></div>
+          <div class="bignum"><div class="val">${lines.length.toLocaleString()}</div><div class="lbl">Consignment lines</div></div>
+        </div>
+        <div class="chartcard"><h3>Cartons by crop</h3><canvas id="c1" height="180"></canvas></div>
+        <div class="chartcard"><h3>Income by crop ($)</h3><canvas id="c2" height="180"></canvas></div>
+        <div class="chartcard"><h3>Bags &amp; bunches per week (last 26 weeks)</h3><canvas id="c3" height="200"></canvas></div>
+        <div class="chartcard"><h3>Top 10 varieties by cartons</h3><canvas id="c4" height="220"></canvas></div>
+      `;
+
+      const COLORS = ["#f5c518", "#ff8c42", "#7b3f9e", "#4caf50", "#1b3a2b", "#c62828"];
+
+      new Chart(document.getElementById("c1"), {
+        type: "bar",
+        data: { labels: Object.keys(byCrop), datasets: [{ data: Object.values(byCrop), backgroundColor: COLORS }] },
+        options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+      });
+      new Chart(document.getElementById("c2"), {
+        type: "bar",
+        data: { labels: Object.keys(byCropIncome), datasets: [{ data: Object.values(byCropIncome).map(v => Math.round(v)), backgroundColor: COLORS }] },
+        options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+      });
+      new Chart(document.getElementById("c3"), {
+        type: "bar",
+        data: {
+          labels: last26,
+          datasets: [
+            { label: "Bags", data: last26.map(w => bagsByWeek[w] || 0), backgroundColor: "#1b3a2b" },
+            { label: "Bunches picked", data: last26.map(w => bunchesByWeek[w] || 0), backgroundColor: "#f5c518" }
+          ]
+        },
+        options: { scales: { y: { beginAtZero: true } } }
+      });
+      new Chart(document.getElementById("c4"), {
+        type: "bar",
+        data: { labels: topVarieties.map(v => v[0]), datasets: [{ data: topVarieties.map(v => v[1]), backgroundColor: "#4caf50" }] },
+        options: { indexAxis: "y", plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
+      });
+    } catch (err) {
+      console.error(err);
+      app.innerHTML = '<div class="loading">Couldn\'t load dashboard data. Check your connection and reload.</div>';
+    }
+  })();
+}
+</script>
+</body>
+</html>

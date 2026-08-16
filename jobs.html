@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Board — Darveniza's Tropical Fruit</title>
+<style>
+  * { box-sizing:border-box; }
+  html,body { margin:0; padding:0; background:#f4f1ea; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; color:#1b3a2b; }
+  header { background:#1b3a2b; color:#fff; padding:16px 18px; display:flex; align-items:center; gap:12px; }
+  header a { color:#cfe8d8; text-decoration:none; font-size:14px; }
+  header h1 { font-size:17px; margin:0; flex:1; }
+  header button { background:#2e5d43; color:#fff; border:none; border-radius:8px; padding:8px 12px; font-size:13px; }
+  main { max-width:560px; margin:0 auto; padding:16px 16px 60px; }
+  .card { background:#fff; border-radius:12px; padding:14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,.06); }
+  .card .job { font-weight:600; font-size:15px; }
+  .card .meta { font-size:12px; color:#888; margin-top:3px; }
+  .card .row { display:flex; align-items:center; gap:8px; margin-top:10px; }
+  .card select { flex:1; padding:8px; border-radius:8px; border:1px solid #cfd8d2; font-size:13px; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:600; }
+  .badge.todo { background:#fff3cd; color:#856404; }
+  .badge.progress { background:#cfe2ff; color:#084298; }
+  .badge.done { background:#d1e7dd; color:#0f5132; }
+  .loading, .empty { padding:40px; text-align:center; color:#888; }
+  #addForm { background:#fff; border-radius:14px; padding:16px; margin-bottom:16px; display:none; }
+  #addForm.open { display:block; }
+  #addForm label { display:block; font-weight:600; font-size:13px; margin:12px 0 6px; }
+  #addForm label:first-child { margin-top:0; }
+  #addForm input, #addForm select { width:100%; padding:10px 12px; border-radius:10px; border:1px solid #cfd8d2; font-size:15px; background:#fff; }
+  #addForm button.submit { margin-top:16px; width:100%; padding:12px; border:none; border-radius:12px; background:#1b3a2b; color:#fff; font-size:15px; font-weight:600; }
+  .tabs { display:flex; gap:8px; margin-bottom:14px; }
+  .tabs button { flex:1; padding:8px; border-radius:8px; border:1px solid #cfd8d2; background:#fff; font-size:13px; }
+  .tabs button.active { background:#1b3a2b; color:#fff; border-color:#1b3a2b; }
+</style>
+</head>
+<body>
+<header>
+  <a href="index.html">&larr;</a>
+  <h1>✅ Job Board</h1>
+  <button id="toggleAdd">+ Add</button>
+</header>
+<main>
+  <div id="addForm">
+    <label>Job</label>
+    <input type="text" id="jobTitle" placeholder="e.g. Spray for leaf spot">
+    <label>Type</label>
+    <select id="jobType">
+      <option value="Paddock Task">Paddock Task</option>
+      <option value="Farm Task">Farm Task</option>
+    </select>
+    <div id="blockWrap" style="display:none;">
+      <label>Block</label>
+      <select id="jobBlock"></select>
+    </div>
+    <label>Due date (optional)</label>
+    <input type="date" id="jobDue">
+    <label>Assigned to (optional)</label>
+    <input type="text" id="jobAssigned">
+    <button class="submit" id="jobSubmit">Add job</button>
+  </div>
+  <div class="tabs">
+    <button class="active" data-f="open">Open</button>
+    <button data-f="all">All</button>
+  </div>
+  <div id="list"><div class="loading">Loading…</div></div>
+</main>
+
+<script src="app.js"></script>
+<script>
+if (APP.checkPin()) {
+  (async function () {
+    const listEl = document.getElementById("list");
+    let jobs = [], blocks = [];
+    let filter = "open";
+
+    function badgeClass(s) { return s === "Done" ? "done" : s === "In progress" ? "progress" : "todo"; }
+
+    function render() {
+      const shown = filter === "open" ? jobs.filter(j => j.fields.Status !== "Done") : jobs;
+      listEl.innerHTML = "";
+      if (!shown.length) { listEl.innerHTML = '<div class="empty">No jobs here.</div>'; return; }
+      shown.sort((a, b) => (a.fields["Due Date"] || "9999").localeCompare(b.fields["Due Date"] || "9999"));
+      shown.forEach(j => {
+        const card = APP.el("div", { class: "card" });
+        card.appendChild(APP.el("div", { class: "job", text: j.fields.Job || "(untitled)" }));
+        const badge = APP.el("span", { class: "badge " + badgeClass(j.fields.Status || "To do"), text: j.fields.Status || "To do" });
+        const meta = APP.el("div", { class: "meta" });
+        meta.appendChild(badge);
+        const bits = [];
+        if (j.fields.Type) bits.push(j.fields.Type);
+        if (j.fields["Due Date"]) bits.push("due " + j.fields["Due Date"]);
+        if (j.fields["Assigned To"]) bits.push(j.fields["Assigned To"]);
+        meta.appendChild(document.createTextNode(" " + bits.join(" · ")));
+        card.appendChild(meta);
+
+        const row = APP.el("div", { class: "row" });
+        const sel = APP.el("select");
+        ["To do", "In progress", "Done"].forEach(s => sel.appendChild(APP.el("option", { value: s, text: s, selected: s === (j.fields.Status || "To do") ? "selected" : undefined })));
+        sel.value = j.fields.Status || "To do";
+        sel.addEventListener("change", async () => {
+          sel.disabled = true;
+          try {
+            await APP.updateRecords(APP.TABLES.jobs, [{ id: j.id, fields: { "Status": sel.value } }]);
+            j.fields.Status = sel.value;
+            APP.toast("Updated ✓");
+            render();
+          } catch (err) {
+            console.error(err); APP.toast("Couldn't update", true);
+          } finally { sel.disabled = false; }
+        });
+        row.appendChild(sel);
+        card.appendChild(row);
+        listEl.appendChild(card);
+      });
+    }
+
+    document.querySelectorAll(".tabs button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tabs button").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        filter = btn.getAttribute("data-f");
+        render();
+      });
+    });
+
+    try {
+      [jobs, blocks] = await Promise.all([
+        APP.list(APP.TABLES.jobs),
+        APP.list(APP.TABLES.blocks, { "fields[]": "Block", "sort[0][field]": "Block", "sort[0][direction]": "asc" })
+      ]);
+      render();
+    } catch (err) {
+      console.error(err);
+      listEl.innerHTML = '<div class="empty">Couldn\'t load jobs. Check your connection and reload.</div>';
+    }
+
+    const jobBlockSelect = document.getElementById("jobBlock");
+    blocks.forEach(b => jobBlockSelect.appendChild(APP.el("option", { value: b.id, text: b.fields.Block || "(unnamed)" })));
+
+    document.getElementById("jobType").addEventListener("change", (e) => {
+      document.getElementById("blockWrap").style.display = e.target.value === "Paddock Task" ? "block" : "none";
+    });
+
+    document.getElementById("toggleAdd").addEventListener("click", () => {
+      document.getElementById("addForm").classList.toggle("open");
+    });
+
+    document.getElementById("jobSubmit").addEventListener("click", async () => {
+      const title = document.getElementById("jobTitle").value.trim();
+      if (!title) { APP.toast("Enter a job title", true); return; }
+      const type = document.getElementById("jobType").value;
+      const btn = document.getElementById("jobSubmit");
+      btn.disabled = true; btn.textContent = "Saving…";
+      const fields = {
+        "Job": title,
+        "Type": type,
+        "Status": "To do"
+      };
+      if (type === "Paddock Task" && jobBlockSelect.value) fields["Block"] = [jobBlockSelect.value];
+      if (document.getElementById("jobDue").value) fields["Due Date"] = document.getElementById("jobDue").value;
+      if (document.getElementById("jobAssigned").value) fields["Assigned To"] = document.getElementById("jobAssigned").value;
+      try {
+        const res = await APP.createRecords(APP.TABLES.jobs, [{ fields }]);
+        jobs.push(res.records[0]);
+        APP.toast("Job added ✓");
+        document.getElementById("jobTitle").value = "";
+        document.getElementById("jobDue").value = "";
+        document.getElementById("jobAssigned").value = "";
+        document.getElementById("addForm").classList.remove("open");
+        render();
+      } catch (err) {
+        console.error(err); APP.toast("Couldn't save job", true);
+      } finally {
+        btn.disabled = false; btn.textContent = "Add job";
+      }
+    });
+  })();
+}
+</script>
+</body>
+</html>

@@ -16,14 +16,12 @@
     background:#fff; border-radius:14px; padding:18px 14px; text-align:center;
     box-shadow:0 2px 8px rgba(0,0,0,.08); text-decoration:none; color:#1b3a2b;
     display:flex; flex-direction:column; align-items:center; gap:8px; transition:transform .1s ease;
+    cursor:pointer; border:none; font:inherit;
   }
   .tile:active { transform:scale(0.97); }
   .tile .emoji { font-size:32px; }
   .tile .label { font-weight:600; font-size:14px; }
   .tile .sub { font-size:11px; color:#888; }
-  section.group { margin-top:26px; }
-  section.group h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:#5a6b5f; margin:0 0 10px; }
-  .subgrid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
   .note { margin-top:30px; font-size:12px; color:#8a8a8a; text-align:center; }
 </style>
 </head>
@@ -34,17 +32,17 @@
 </header>
 <main>
   <div class="grid">
-    <a class="tile" href="https://airtable.com/appqwWfRyJQ72H6On/pagnqLILDem41YPZ9">
+    <a class="tile" href="fert.html">
       <div class="emoji">🌱</div>
       <div class="label">Fertilise</div>
       <div class="sub">Log fert application</div>
     </a>
-    <a class="tile" href="https://airtable.com/appqwWfRyJQ72H6On/pag67vD4qd3ZysApc">
+    <a class="tile" href="spray.html">
       <div class="emoji">🧴</div>
       <div class="label">Spray</div>
       <div class="sub">Log spray application</div>
     </a>
-    <a class="tile" href="https://airtable.com/appqwWfRyJQ72H6On/pagX27jWeiAJ0yqS2">
+    <a class="tile" href="cattle.html">
       <div class="emoji">🐄</div>
       <div class="label">Cattle Manager</div>
       <div class="sub">Move / treat / status</div>
@@ -54,59 +52,26 @@
       <div class="label">Farm Map</div>
       <div class="sub">Interactive paddock map</div>
     </a>
-    <a class="tile" href="https://airtable.com/appqwWfRyJQ72H6On/pagI2bvE82Zn1TL4r">
+    <a class="tile" href="jobs.html">
       <div class="emoji">✅</div>
       <div class="label">To Do</div>
       <div class="sub">Job board</div>
     </a>
-    <a class="tile" href="https://airtable.com/appqwWfRyJQ72H6On/pagOnlQR5f8Btds2Y">
+    <a class="tile" href="chemshed.html">
       <div class="emoji">🧪</div>
       <div class="label">Chemical Shed</div>
       <div class="sub">Stock &amp; chem clear</div>
     </a>
-    <a class="tile" href="https://airtable.com/appqwWfRyJQ72H6On/paguNF8qMQMfCP95b" style="grid-column:1 / -1;">
+    <a class="tile" href="dashboard.html" style="grid-column:1 / -1;">
       <div class="emoji">📊</div>
       <div class="label">Productivity</div>
       <div class="sub">Sales &amp; production dashboard</div>
     </a>
   </div>
 
-  <section class="group">
-    <h2>Cattle Manager</h2>
-    <div class="subgrid">
-      <a class="tile" href="https://airtable.com/appqwWfRyJQ72H6On/pag5H2tXt1KRabMtI">
-        <div class="emoji">🚚</div>
-        <div class="label" style="font-size:12px;">Move Cattle</div>
-      </a>
-      <a class="tile" href="https://airtable.com/appqwWfRyJQ72H6On/pagrjBqkjsIuFo99j">
-        <div class="emoji">💉</div>
-        <div class="label" style="font-size:12px;">Treatment</div>
-      </a>
-      <a class="tile" href="https://airtable.com/appqwWfRyJQ72H6On/pagIyW2spvkzuMO1t">
-        <div class="emoji">📋</div>
-        <div class="label" style="font-size:12px;">Rotation Log</div>
-      </a>
-    </div>
-  </section>
-
-  <section class="group">
-    <h2>To Do</h2>
-    <div class="subgrid">
-      <a class="tile" href="https://airtable.com/appqwWfRyJQ72H6On/pagI2bvE82Zn1TL4r">
-        <div class="emoji">📌</div>
-        <div class="label" style="font-size:12px;">See List</div>
-      </a>
-      <a class="tile" href="https://airtable.com/appqwWfRyJQ72H6On/pagcb20yr8lYz38B7">
-        <div class="emoji">➕</div>
-        <div class="label" style="font-size:12px;">Add Job</div>
-      </a>
-    </div>
-  </section>
-
   <p class="note">
-    A couple of these links (Fertilise, Spray, Cattle sub-forms, Add Job) point at Airtable's form pages —
-    worth a quick click-test on each once this is live, since the public "fill out" link can differ
-    slightly from the design link. Ping William if any of them land on an edit view instead of a blank form.
+    This app talks straight to the farm database — no Airtable login, no app hand-off. First time on
+    each device it'll ask for the farm PIN, then it'll remember you for the rest of that browser session.
   </p>
 </main>
 </body>
