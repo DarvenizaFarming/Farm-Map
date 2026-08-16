@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Productivity — Darveniza's Tropical Fruit</title>
+<title>Production — Darveniza's Tropical Fruit</title>
 <style>
   * { box-sizing:border-box; }
   html,body { margin:0; padding:0; background:#f4f1ea; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; color:#1b3a2b; }
@@ -11,19 +11,39 @@
   header a { color:#cfe8d8; text-decoration:none; font-size:14px; }
   header h1 { font-size:17px; margin:0; }
   main { max-width:640px; margin:0 auto; padding:16px 16px 60px; }
-  .bignums { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:18px; }
+
+  .tabs { display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; margin-bottom:16px; -webkit-overflow-scrolling:touch; }
+  .tab { flex:0 0 auto; background:#fff; border:1px solid #ddd6c5; color:#1b3a2b; padding:8px 16px; border-radius:20px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap; }
+  .tab.active { background:#1b3a2b; color:#fff; border-color:#1b3a2b; }
+
+  .bignums { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px; }
   .bignum { background:#fff; border-radius:12px; padding:14px 8px; text-align:center; box-shadow:0 2px 6px rgba(0,0,0,.06); }
   .bignum .val { font-size:20px; font-weight:700; }
   .bignum .lbl { font-size:11px; color:#888; margin-top:2px; }
+  .bignum.warn .val { color:#c62828; }
+
   .chartcard { background:#fff; border-radius:12px; padding:14px; margin-bottom:16px; box-shadow:0 2px 6px rgba(0,0,0,.06); }
   .chartcard h3 { margin:0 0 10px; font-size:14px; }
+
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:7px 6px; border-bottom:1px solid #eee; }
+  th { color:#888; font-weight:600; font-size:11px; text-transform:uppercase; cursor:pointer; user-select:none; }
+  th.num, td.num { text-align:right; }
+  .scroll { max-height:360px; overflow-y:auto; }
+
+  .unpaid-row { display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid #eee; font-size:13px; }
+  .unpaid-row .con { font-weight:600; }
+  .unpaid-row .buyer { color:#888; font-size:12px; }
+  .unpaid-row .amt { font-weight:700; color:#c62828; }
+
   .loading { padding:60px 20px; text-align:center; color:#888; }
+  .empty { padding:16px; text-align:center; color:#888; font-size:13px; }
 </style>
 </head>
 <body>
 <header>
   <a href="index.html">&larr;</a>
-  <h1>📊 Productivity</h1>
+  <h1>📊 Production</h1>
 </header>
 <main id="app"><div class="loading">Loading live data — this pulls the whole season, give it a few seconds…</div></main>
 
@@ -33,78 +53,202 @@
 if (APP.checkPin()) {
   (async function () {
     const app = document.getElementById("app");
+    const CROPS = ["Papaya", "Bananas", "Passionfruit"];
+    let currentTab = "Overview";
+    let sortKey = "cartons", sortDir = "desc";
+    let charts = [];
+
     try {
-      const [lines, bagging, picking] = await Promise.all([
-        APP.list(APP.TABLES.consignmentLines, { "fields[]": ["Production Area", "Cartons", "Gross Income", "Variety"] }),
+      const [lines, cons, buyers, bagging, picking] = await Promise.all([
+        APP.list(APP.TABLES.consignmentLines, { "fields[]": ["Production Area", "Cartons", "Gross Income", "Variety", "Con #"] }),
+        APP.list(APP.TABLES.consignments, { "fields[]": ["Con #", "Paid", "Buyer"] }),
+        APP.list(APP.TABLES.buyers, { "fields[]": ["Buyer"] }),
         APP.list(APP.TABLES.bagging, { "fields[]": ["Week Of", "Bags"] }),
         APP.list(APP.TABLES.picking, { "fields[]": ["Week Of", "Bunches"] })
       ]);
 
-      // ---- Aggregate ----
-      let totalCartons = 0, totalIncome = 0;
-      const byCrop = {}, byCropIncome = {}, byVariety = {};
-      lines.forEach(r => {
-        const f = r.fields;
-        const crop = f["Production Area"] || "Unknown";
-        const cartons = f.Cartons || 0;
-        const income = f["Gross Income"] || 0;
-        totalCartons += cartons; totalIncome += income;
-        byCrop[crop] = (byCrop[crop] || 0) + cartons;
-        byCropIncome[crop] = (byCropIncome[crop] || 0) + income;
-        if (f.Variety) byVariety[f.Variety] = (byVariety[f.Variety] || 0) + cartons;
-      });
-      const topVarieties = Object.entries(byVariety).sort((a, b) => b[1] - a[1]).slice(0, 10);
+      // ---- Lookup maps ----
+      const buyerName = {};
+      buyers.forEach(b => { buyerName[b.id] = b.fields.Buyer || "Unknown buyer"; });
 
+      const consInfo = {};
+      cons.forEach(c => {
+        const buyerIds = c.fields.Buyer || [];
+        consInfo[c.id] = {
+          conNum: c.fields["Con #"] || "?",
+          paid: !!c.fields.Paid,
+          buyer: buyerIds.map(id => buyerName[id]).filter(Boolean).join(", ") || "—"
+        };
+      });
+
+      // ---- Week series (bagging/picking - bananas only) ----
       const bagsByWeek = {}, bunchesByWeek = {};
       bagging.forEach(r => { const w = r.fields["Week Of"]; if (w) bagsByWeek[w] = (bagsByWeek[w] || 0) + (r.fields.Bags || 0); });
       picking.forEach(r => { const w = r.fields["Week Of"]; if (w) bunchesByWeek[w] = (bunchesByWeek[w] || 0) + (r.fields.Bunches || 0); });
       const allWeeks = Array.from(new Set([...Object.keys(bagsByWeek), ...Object.keys(bunchesByWeek)])).sort();
       const last26 = allWeeks.slice(-26);
 
-      // ---- Render shell ----
-      app.innerHTML = `
-        <div class="bignums">
-          <div class="bignum"><div class="val">${totalCartons.toLocaleString()}</div><div class="lbl">Total cartons</div></div>
-          <div class="bignum"><div class="val">$${Math.round(totalIncome).toLocaleString()}</div><div class="lbl">Recorded income</div></div>
-          <div class="bignum"><div class="val">${lines.length.toLocaleString()}</div><div class="lbl">Consignment lines</div></div>
-        </div>
-        <div class="chartcard"><h3>Cartons by crop</h3><canvas id="c1" height="180"></canvas></div>
-        <div class="chartcard"><h3>Income by crop ($)</h3><canvas id="c2" height="180"></canvas></div>
-        <div class="chartcard"><h3>Bags &amp; bunches per week (last 26 weeks)</h3><canvas id="c3" height="200"></canvas></div>
-        <div class="chartcard"><h3>Top 10 varieties by cartons</h3><canvas id="c4" height="220"></canvas></div>
-      `;
+      // ---- Build a stats object for a given scope (null = all crops) ----
+      function buildStats(cropFilter) {
+        const s = {
+          totalCartons: 0, totalIncome: 0,
+          byCrop: {}, byCropIncome: {},
+          variety: {}, // name -> {cartons, income}
+          unpaidByCon: {}, // conId -> {cartons, income}
+        };
+        lines.forEach(r => {
+          const f = r.fields;
+          const crop = f["Production Area"] || "Unknown";
+          if (cropFilter && crop !== cropFilter) return;
+          const cartons = f.Cartons || 0;
+          const income = f["Gross Income"] || 0;
+          const variety = f.Variety || "Unspecified";
+          const conIds = f["Con #"] || [];
+          const conId = conIds[0];
 
-      const COLORS = ["#f5c518", "#ff8c42", "#7b3f9e", "#4caf50", "#1b3a2b", "#c62828"];
+          s.totalCartons += cartons;
+          s.totalIncome += income;
+          s.byCrop[crop] = (s.byCrop[crop] || 0) + cartons;
+          s.byCropIncome[crop] = (s.byCropIncome[crop] || 0) + income;
 
-      new Chart(document.getElementById("c1"), {
-        type: "bar",
-        data: { labels: Object.keys(byCrop), datasets: [{ data: Object.values(byCrop), backgroundColor: COLORS }] },
-        options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
-      });
-      new Chart(document.getElementById("c2"), {
-        type: "bar",
-        data: { labels: Object.keys(byCropIncome), datasets: [{ data: Object.values(byCropIncome).map(v => Math.round(v)), backgroundColor: COLORS }] },
-        options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
-      });
-      new Chart(document.getElementById("c3"), {
-        type: "bar",
-        data: {
-          labels: last26,
-          datasets: [
-            { label: "Bags", data: last26.map(w => bagsByWeek[w] || 0), backgroundColor: "#1b3a2b" },
-            { label: "Bunches picked", data: last26.map(w => bunchesByWeek[w] || 0), backgroundColor: "#f5c518" }
-          ]
-        },
-        options: { scales: { y: { beginAtZero: true } } }
-      });
-      new Chart(document.getElementById("c4"), {
-        type: "bar",
-        data: { labels: topVarieties.map(v => v[0]), datasets: [{ data: topVarieties.map(v => v[1]), backgroundColor: "#4caf50" }] },
-        options: { indexAxis: "y", plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
-      });
+          if (!s.variety[variety]) s.variety[variety] = { cartons: 0, income: 0 };
+          s.variety[variety].cartons += cartons;
+          s.variety[variety].income += income;
+
+          const info = conId ? consInfo[conId] : null;
+          if (info && !info.paid) {
+            if (!s.unpaidByCon[conId]) s.unpaidByCon[conId] = { cartons: 0, income: 0 };
+            s.unpaidByCon[conId].cartons += cartons;
+            s.unpaidByCon[conId].income += income;
+          }
+        });
+        return s;
+      }
+
+      // ---- Render ----
+      function render() {
+        const cropFilter = currentTab === "Overview" ? null : currentTab;
+        const s = buildStats(cropFilter);
+        const unpaidConIds = Object.keys(s.unpaidByCon);
+        const unpaidTotal = unpaidConIds.reduce((sum, id) => sum + s.unpaidByCon[id].income, 0);
+
+        let html = `<div class="tabs">`;
+        ["Overview", ...CROPS].forEach(t => {
+          html += `<button class="tab${t === currentTab ? " active" : ""}" data-tab="${t}">${t}</button>`;
+        });
+        html += `</div>`;
+
+        html += `
+          <div class="bignums">
+            <div class="bignum"><div class="val">${s.totalCartons.toLocaleString()}</div><div class="lbl">Cartons${cropFilter ? " — " + cropFilter : ""}</div></div>
+            <div class="bignum"><div class="val">$${Math.round(s.totalIncome).toLocaleString()}</div><div class="lbl">Income${cropFilter ? " — " + cropFilter : ""}</div></div>
+            <div class="bignum warn"><div class="val">${unpaidConIds.length}</div><div class="lbl">Unpaid consignments</div></div>
+            <div class="bignum warn"><div class="val">$${Math.round(unpaidTotal).toLocaleString()}</div><div class="lbl">Outstanding</div></div>
+          </div>
+        `;
+
+        if (!cropFilter) {
+          html += `
+            <div class="chartcard"><h3>Cartons by crop</h3><canvas id="c1" height="180"></canvas></div>
+            <div class="chartcard"><h3>Income by crop ($)</h3><canvas id="c2" height="180"></canvas></div>
+          `;
+        }
+
+        if (!cropFilter || cropFilter === "Bananas") {
+          html += `<div class="chartcard"><h3>Bags &amp; bunches per week (last 26 weeks)</h3><canvas id="c3" height="200"></canvas></div>`;
+        }
+
+        // Variety table
+        const varietyRows = Object.entries(s.variety).map(([name, v]) => ({ name, cartons: v.cartons, income: v.income }));
+        varietyRows.sort((a, b) => sortDir === "desc" ? b[sortKey] - a[sortKey] : a[sortKey] - b[sortKey]);
+        html += `
+          <div class="chartcard">
+            <h3>Varieties${cropFilter ? " — " + cropFilter : " (all crops)"}</h3>
+            <div class="scroll"><table>
+              <thead><tr>
+                <th>Variety</th>
+                <th class="num" data-sort="cartons">Cartons</th>
+                <th class="num" data-sort="income">Income</th>
+              </tr></thead>
+              <tbody>
+                ${varietyRows.map(v => `<tr><td>${v.name}</td><td class="num">${v.cartons.toLocaleString()}</td><td class="num">$${Math.round(v.income).toLocaleString()}</td></tr>`).join("") || '<tr><td colspan="3" class="empty">No data</td></tr>'}
+              </tbody>
+            </table></div>
+          </div>
+        `;
+
+        // Unpaid consignments list
+        const unpaidRows = unpaidConIds.map(id => ({
+          id, conNum: consInfo[id] ? consInfo[id].conNum : "?",
+          buyer: consInfo[id] ? consInfo[id].buyer : "—",
+          income: s.unpaidByCon[id].income
+        })).sort((a, b) => b.income - a.income);
+
+        html += `
+          <div class="chartcard">
+            <h3>Unpaid consignments${cropFilter ? " — " + cropFilter : ""}</h3>
+            ${unpaidRows.length ? unpaidRows.map(r => `
+              <div class="unpaid-row">
+                <div><div class="con">Con ${r.conNum}</div><div class="buyer">${r.buyer}</div></div>
+                <div class="amt">$${Math.round(r.income).toLocaleString()}</div>
+              </div>
+            `).join("") : '<div class="empty">Nothing outstanding 🎉</div>'}
+          </div>
+        `;
+
+        app.innerHTML = html;
+
+        // Wire up tabs
+        app.querySelectorAll(".tab").forEach(btn => {
+          btn.addEventListener("click", () => { currentTab = btn.dataset.tab; render(); });
+        });
+        // Wire up sortable variety headers
+        app.querySelectorAll("th[data-sort]").forEach(th => {
+          th.addEventListener("click", () => {
+            const key = th.dataset.sort;
+            if (sortKey === key) sortDir = sortDir === "desc" ? "asc" : "desc";
+            else { sortKey = key; sortDir = "desc"; }
+            render();
+          });
+        });
+
+        // Destroy old charts before making new ones
+        charts.forEach(c => c.destroy());
+        charts = [];
+        const COLORS = ["#f5c518", "#ff8c42", "#7b3f9e", "#4caf50", "#1b3a2b", "#c62828"];
+
+        if (!cropFilter) {
+          const c1 = document.getElementById("c1");
+          if (c1) charts.push(new Chart(c1, {
+            type: "bar",
+            data: { labels: Object.keys(s.byCrop), datasets: [{ data: Object.values(s.byCrop), backgroundColor: COLORS }] },
+            options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+          }));
+          const c2 = document.getElementById("c2");
+          if (c2) charts.push(new Chart(c2, {
+            type: "bar",
+            data: { labels: Object.keys(s.byCropIncome), datasets: [{ data: Object.values(s.byCropIncome).map(v => Math.round(v)), backgroundColor: COLORS }] },
+            options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+          }));
+        }
+        const c3 = document.getElementById("c3");
+        if (c3) charts.push(new Chart(c3, {
+          type: "bar",
+          data: {
+            labels: last26,
+            datasets: [
+              { label: "Bags", data: last26.map(w => bagsByWeek[w] || 0), backgroundColor: "#1b3a2b" },
+              { label: "Bunches picked", data: last26.map(w => bunchesByWeek[w] || 0), backgroundColor: "#f5c518" }
+            ]
+          },
+          options: { scales: { y: { beginAtZero: true } } }
+        }));
+      }
+
+      render();
     } catch (err) {
       console.error(err);
-      app.innerHTML = '<div class="loading">Couldn\'t load dashboard data. Check your connection and reload.</div>';
+      app.innerHTML = '<div class="loading">Couldn\'t load production data. Check your connection and reload.</div>';
     }
   })();
 }

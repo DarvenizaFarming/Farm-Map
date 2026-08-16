@@ -23,7 +23,9 @@ const APP = (function () {
     rotationLog: "tblSnMM0eD0dOEwKW",
     consignmentLines: "tblu1v8XTJhpaHu7g",
     bagging: "tblvXHNWiPZ9aPrhJ",
-    picking: "tblvbMWSexFa9K1O3"
+    picking: "tblvbMWSexFa9K1O3",
+    consignments: "tblWWaACf1KjjVXtp",
+    buyers: "tblTkb2W04F7Cqhub"
   };
 
   const API_ROOT = "https://api.airtable.com/v0/" + BASE_ID + "/";
