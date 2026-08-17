@@ -25,7 +25,8 @@ const APP = (function () {
     bagging: "tblvXHNWiPZ9aPrhJ",
     picking: "tblvbMWSexFa9K1O3",
     consignments: "tblWWaACf1KjjVXtp",
-    buyers: "tblTkb2W04F7Cqhub"
+    buyers: "tblTkb2W04F7Cqhub",
+    weeklyBananaSummary: "tblC18gzxl1kJ3fwD"
   };
 
   const API_ROOT = "https://api.airtable.com/v0/" + BASE_ID + "/";

@@ -16,6 +16,14 @@
   .tab { flex:0 0 auto; background:#fff; border:1px solid #ddd6c5; color:#1b3a2b; padding:8px 16px; border-radius:20px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap; }
   .tab.active { background:#1b3a2b; color:#fff; border-color:#1b3a2b; }
 
+  .filterbar { background:#fff; border-radius:12px; padding:10px 12px; margin-bottom:16px; box-shadow:0 2px 6px rgba(0,0,0,.06); }
+  .filterbar .presets { display:flex; gap:6px; overflow-x:auto; margin-bottom:8px; -webkit-overflow-scrolling:touch; }
+  .filterbar .preset { flex:0 0 auto; background:#f4f1ea; border:1px solid #ddd6c5; color:#1b3a2b; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; }
+  .filterbar .preset.active { background:#1b3a2b; color:#fff; border-color:#1b3a2b; }
+  .filterbar .customrow { display:flex; align-items:center; gap:6px; font-size:12px; color:#666; }
+  .filterbar .customrow input[type=date] { flex:1; min-width:0; padding:5px 6px; border:1px solid #ddd6c5; border-radius:6px; font-size:12px; color:#1b3a2b; }
+  .filterbar .clear { background:none; border:none; color:#c62828; font-size:12px; cursor:pointer; padding:0; white-space:nowrap; }
+
   .bignums { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px; }
   .bignum { background:#fff; border-radius:12px; padding:14px 8px; text-align:center; box-shadow:0 2px 6px rgba(0,0,0,.06); }
   .bignum .val { font-size:20px; font-weight:700; }
@@ -58,13 +66,42 @@ if (APP.checkPin()) {
     let sortKey = "cartons", sortDir = "desc";
     let charts = [];
 
+    // ---- Date range filter state ----
+    // dateFrom/dateTo are "YYYY-MM-DD" strings or "" for unbounded. preset tracks which
+    // quick-select button (if any) is active, purely for highlighting the UI.
+    let dateFrom = "", dateTo = "", preset = "all";
+
+    function todayStr() { return APP.todayISO(); }
+    function yearsAgoStr(n) {
+      const d = new Date();
+      d.setFullYear(d.getFullYear() - n);
+      return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    }
+    function applyPreset(p) {
+      preset = p;
+      if (p === "all") { dateFrom = ""; dateTo = ""; }
+      else if (p === "ytd") { dateFrom = new Date().getFullYear() + "-01-01"; dateTo = ""; }
+      else if (p === "12mo") { dateFrom = yearsAgoStr(1); dateTo = ""; }
+      render();
+    }
+    // A date string is in range if it's not empty and falls within [dateFrom, dateTo] (either bound optional).
+    // Works directly on "YYYY-MM-DD" strings since that format sorts lexicographically same as chronologically.
+    function inRange(dateStr) {
+      if (!dateFrom && !dateTo) return true;
+      if (!dateStr) return false;
+      if (dateFrom && dateStr < dateFrom) return false;
+      if (dateTo && dateStr > dateTo) return false;
+      return true;
+    }
+
     try {
-      const [lines, cons, buyers, bagging, picking] = await Promise.all([
-        APP.list(APP.TABLES.consignmentLines, { "fields[]": ["Production Area", "Cartons", "Gross Income", "Variety", "Con #"] }),
+      const [lines, cons, buyers, bagging, picking, wbs] = await Promise.all([
+        APP.list(APP.TABLES.consignmentLines, { "fields[]": ["Production Area", "Cartons", "Gross Income", "Variety", "Con #", "Date"] }),
         APP.list(APP.TABLES.consignments, { "fields[]": ["Con #", "Paid", "Buyer"] }),
         APP.list(APP.TABLES.buyers, { "fields[]": ["Buyer"] }),
         APP.list(APP.TABLES.bagging, { "fields[]": ["Week Of", "Bags"] }),
-        APP.list(APP.TABLES.picking, { "fields[]": ["Week Of", "Bunches"] })
+        APP.list(APP.TABLES.picking, { "fields[]": ["Week Of", "Bunches"] }),
+        APP.list(APP.TABLES.weeklyBananaSummary, { "fields[]": ["Week Of", "Bunches Picked", "Cartons Sold", "Cartons per Bunch"] })
       ]);
 
       // ---- Lookup maps ----
@@ -86,9 +123,14 @@ if (APP.checkPin()) {
       bagging.forEach(r => { const w = r.fields["Week Of"]; if (w) bagsByWeek[w] = (bagsByWeek[w] || 0) + (r.fields.Bags || 0); });
       picking.forEach(r => { const w = r.fields["Week Of"]; if (w) bunchesByWeek[w] = (bunchesByWeek[w] || 0) + (r.fields.Bunches || 0); });
       const allWeeks = Array.from(new Set([...Object.keys(bagsByWeek), ...Object.keys(bunchesByWeek)])).sort();
-      const last26 = allWeeks.slice(-26);
+
+      // ---- Weekly Banana Summary series (Cartons per Bunch trend) ----
+      const wbsSorted = wbs.slice().sort((a, b) => (a.fields["Week Of"] || "").localeCompare(b.fields["Week Of"] || ""));
 
       // ---- Build a stats object for a given scope (null = all crops) ----
+      // Period totals (cartons/income/variety) respect the date range filter.
+      // Unpaid consignments are always shown all-time — that's an outstanding-balance
+      // snapshot, not a period metric, so it isn't scoped to the selected range.
       function buildStats(cropFilter) {
         const s = {
           totalCartons: 0, totalIncome: 0,
@@ -105,17 +147,20 @@ if (APP.checkPin()) {
           const variety = f.Variety || "Unspecified";
           const conIds = f["Con #"] || [];
           const conId = conIds[0];
-
-          s.totalCartons += cartons;
-          s.totalIncome += income;
-          s.byCrop[crop] = (s.byCrop[crop] || 0) + cartons;
-          s.byCropIncome[crop] = (s.byCropIncome[crop] || 0) + income;
-
-          if (!s.variety[variety]) s.variety[variety] = { cartons: 0, income: 0 };
-          s.variety[variety].cartons += cartons;
-          s.variety[variety].income += income;
-
           const info = conId ? consInfo[conId] : null;
+
+          if (inRange(f.Date)) {
+            s.totalCartons += cartons;
+            s.totalIncome += income;
+            s.byCrop[crop] = (s.byCrop[crop] || 0) + cartons;
+            s.byCropIncome[crop] = (s.byCropIncome[crop] || 0) + income;
+
+            if (!s.variety[variety]) s.variety[variety] = { cartons: 0, income: 0 };
+            s.variety[variety].cartons += cartons;
+            s.variety[variety].income += income;
+          }
+
+          // Unpaid: always all-time, regardless of the date filter above.
           if (info && !info.paid) {
             if (!s.unpaidByCon[conId]) s.unpaidByCon[conId] = { cartons: 0, income: 0 };
             s.unpaidByCon[conId].cartons += cartons;
@@ -131,6 +176,13 @@ if (APP.checkPin()) {
         const s = buildStats(cropFilter);
         const unpaidConIds = Object.keys(s.unpaidByCon);
         const unpaidTotal = unpaidConIds.reduce((sum, id) => sum + s.unpaidByCon[id].income, 0);
+        const rangeActive = !!(dateFrom || dateTo);
+
+        // Weekly Banana Summary rows within the selected range (or full history if no range set)
+        const wbsInRange = rangeActive ? wbsSorted.filter(r => inRange(r.fields["Week Of"])) : wbsSorted;
+        const totalBunchesPicked = wbsInRange.reduce((sum, r) => sum + (r.fields["Bunches Picked"] || 0), 0);
+        const totalCartonsSoldWBS = wbsInRange.reduce((sum, r) => sum + (r.fields["Cartons Sold"] || 0), 0);
+        const cartonsPerBunch = totalBunchesPicked > 0 ? totalCartonsSoldWBS / totalBunchesPicked : null;
 
         let html = `<div class="tabs">`;
         ["Overview", ...CROPS].forEach(t => {
@@ -139,9 +191,27 @@ if (APP.checkPin()) {
         html += `</div>`;
 
         html += `
+          <div class="filterbar">
+            <div class="presets">
+              <button class="preset${preset === "all" ? " active" : ""}" data-preset="all">All time</button>
+              <button class="preset${preset === "ytd" ? " active" : ""}" data-preset="ytd">This year</button>
+              <button class="preset${preset === "12mo" ? " active" : ""}" data-preset="12mo">Last 12 months</button>
+            </div>
+            <div class="customrow">
+              <span>From</span>
+              <input type="date" id="fromDate" value="${dateFrom}">
+              <span>To</span>
+              <input type="date" id="toDate" value="${dateTo}">
+              ${rangeActive ? '<button class="clear" id="clearRange">Clear</button>' : ''}
+            </div>
+          </div>
+        `;
+
+        html += `
           <div class="bignums">
             <div class="bignum"><div class="val">${s.totalCartons.toLocaleString()}</div><div class="lbl">Cartons${cropFilter ? " — " + cropFilter : ""}</div></div>
             <div class="bignum"><div class="val">$${Math.round(s.totalIncome).toLocaleString()}</div><div class="lbl">Income${cropFilter ? " — " + cropFilter : ""}</div></div>
+            ${(!cropFilter || cropFilter === "Bananas") ? `<div class="bignum"><div class="val">${cartonsPerBunch !== null ? cartonsPerBunch.toFixed(2) : "—"}</div><div class="lbl">Cartons per Bunch${rangeActive ? "" : " (all time)"}</div></div>` : ''}
             <div class="bignum warn"><div class="val">${unpaidConIds.length}</div><div class="lbl">Unpaid consignments</div></div>
             <div class="bignum warn"><div class="val">$${Math.round(unpaidTotal).toLocaleString()}</div><div class="lbl">Outstanding</div></div>
           </div>
@@ -155,7 +225,8 @@ if (APP.checkPin()) {
         }
 
         if (!cropFilter || cropFilter === "Bananas") {
-          html += `<div class="chartcard"><h3>Bags &amp; bunches per week (last 26 weeks)</h3><canvas id="c3" height="200"></canvas></div>`;
+          html += `<div class="chartcard"><h3>Cartons per Bunch — weekly trend${rangeActive ? "" : " (all time)"}</h3><canvas id="c4" height="200"></canvas></div>`;
+          html += `<div class="chartcard"><h3>Bags &amp; bunches per week${rangeActive ? "" : " (last 26 weeks)"}</h3><canvas id="c3" height="200"></canvas></div>`;
         }
 
         // Variety table
@@ -202,6 +273,16 @@ if (APP.checkPin()) {
         app.querySelectorAll(".tab").forEach(btn => {
           btn.addEventListener("click", () => { currentTab = btn.dataset.tab; render(); });
         });
+        // Wire up date-range filter bar
+        app.querySelectorAll(".preset").forEach(btn => {
+          btn.addEventListener("click", () => applyPreset(btn.dataset.preset));
+        });
+        const fromInput = document.getElementById("fromDate");
+        const toInput = document.getElementById("toDate");
+        if (fromInput) fromInput.addEventListener("change", () => { dateFrom = fromInput.value; preset = "custom"; render(); });
+        if (toInput) toInput.addEventListener("change", () => { dateTo = toInput.value; preset = "custom"; render(); });
+        const clearBtn = document.getElementById("clearRange");
+        if (clearBtn) clearBtn.addEventListener("click", () => applyPreset("all"));
         // Wire up sortable variety headers
         app.querySelectorAll("th[data-sort]").forEach(th => {
           th.addEventListener("click", () => {
@@ -231,18 +312,36 @@ if (APP.checkPin()) {
             options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
           }));
         }
-        const c3 = document.getElementById("c3");
-        if (c3) charts.push(new Chart(c3, {
-          type: "bar",
-          data: {
-            labels: last26,
-            datasets: [
-              { label: "Bags", data: last26.map(w => bagsByWeek[w] || 0), backgroundColor: "#1b3a2b" },
-              { label: "Bunches picked", data: last26.map(w => bunchesByWeek[w] || 0), backgroundColor: "#f5c518" }
-            ]
-          },
-          options: { scales: { y: { beginAtZero: true } } }
-        }));
+
+        if (!cropFilter || cropFilter === "Bananas") {
+          const c4 = document.getElementById("c4");
+          if (c4) charts.push(new Chart(c4, {
+            type: "line",
+            data: {
+              labels: wbsInRange.map(r => r.fields["Week Of"]),
+              datasets: [{
+                label: "Cartons per Bunch",
+                data: wbsInRange.map(r => r.fields["Cartons per Bunch"] ?? null),
+                borderColor: "#1b3a2b", backgroundColor: "#1b3a2b", spanGaps: true, tension: 0.2, pointRadius: 2
+              }]
+            },
+            options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+          }));
+
+          const weeksInScope = rangeActive ? allWeeks.filter(w => inRange(w)) : allWeeks.slice(-26);
+          const c3 = document.getElementById("c3");
+          if (c3) charts.push(new Chart(c3, {
+            type: "bar",
+            data: {
+              labels: weeksInScope,
+              datasets: [
+                { label: "Bags", data: weeksInScope.map(w => bagsByWeek[w] || 0), backgroundColor: "#1b3a2b" },
+                { label: "Bunches picked", data: weeksInScope.map(w => bunchesByWeek[w] || 0), backgroundColor: "#f5c518" }
+              ]
+            },
+            options: { scales: { y: { beginAtZero: true } } }
+          }));
+        }
       }
 
       render();
