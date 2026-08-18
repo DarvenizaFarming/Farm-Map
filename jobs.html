@@ -17,6 +17,12 @@
   .card .meta { font-size:12px; color:#888; margin-top:3px; }
   .card .row { display:flex; align-items:center; gap:8px; margin-top:10px; }
   .card select { flex:1; padding:8px; border-radius:8px; border:1px solid #cfd8d2; font-size:13px; }
+  .card .actions { display:flex; gap:6px; }
+  .card .iconbtn { flex:0 0 auto; width:36px; height:36px; padding:0; border-radius:8px; border:1px solid #cfd8d2; background:#fff; font-size:15px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .card .iconbtn.danger { border-color:#f1c3c3; color:#c62828; }
+  #addForm .formhead { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
+  #addForm .formhead h3 { margin:0; font-size:14px; }
+  #addForm .cancel { background:none; border:none; color:#888; font-size:13px; cursor:pointer; padding:0; }
   .badge { display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:600; }
   .badge.todo { background:#fff3cd; color:#856404; }
   .badge.progress { background:#cfe2ff; color:#084298; }
@@ -41,6 +47,10 @@
 </header>
 <main>
   <div id="addForm">
+    <div class="formhead">
+      <h3 id="formTitle">New job</h3>
+      <button class="cancel" id="formCancel" style="display:none;">Cancel</button>
+    </div>
     <label>Job</label>
     <input type="text" id="jobTitle" placeholder="e.g. Spray for leaf spot">
     <label>Type</label>
@@ -72,6 +82,49 @@ if (APP.checkPin()) {
     const listEl = document.getElementById("list");
     let jobs = [], blocks = [];
     let filter = "open";
+    let editingId = null;
+
+    function resetForm() {
+      editingId = null;
+      document.getElementById("formTitle").textContent = "New job";
+      document.getElementById("jobSubmit").textContent = "Add job";
+      document.getElementById("formCancel").style.display = "none";
+      document.getElementById("jobTitle").value = "";
+      document.getElementById("jobType").value = "Paddock Task";
+      document.getElementById("blockWrap").style.display = "block";
+      jobBlockSelect.value = "";
+      document.getElementById("jobDue").value = "";
+      document.getElementById("jobAssigned").value = "";
+    }
+
+    function startEdit(j) {
+      editingId = j.id;
+      document.getElementById("formTitle").textContent = "Edit job";
+      document.getElementById("jobSubmit").textContent = "Save changes";
+      document.getElementById("formCancel").style.display = "inline";
+      document.getElementById("jobTitle").value = j.fields.Job || "";
+      const type = j.fields.Type || "Paddock Task";
+      document.getElementById("jobType").value = type;
+      document.getElementById("blockWrap").style.display = type === "Paddock Task" ? "block" : "none";
+      jobBlockSelect.value = (j.fields.Block && j.fields.Block[0]) || "";
+      document.getElementById("jobDue").value = j.fields["Due Date"] || "";
+      document.getElementById("jobAssigned").value = j.fields["Assigned To"] || "";
+      document.getElementById("addForm").classList.add("open");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    async function deleteJob(j) {
+      if (!confirm('Delete "' + (j.fields.Job || "this job") + '"? This can\'t be undone.')) return;
+      try {
+        await APP.deleteRecords(APP.TABLES.jobs, [j.id]);
+        jobs = jobs.filter(x => x.id !== j.id);
+        if (editingId === j.id) resetForm();
+        APP.toast("Job deleted ✓");
+        render();
+      } catch (err) {
+        console.error(err); APP.toast("Couldn't delete job", true);
+      }
+    }
 
     function badgeClass(s) { return s === "Done" ? "done" : s === "In progress" ? "progress" : "todo"; }
 
@@ -109,6 +162,18 @@ if (APP.checkPin()) {
           } finally { sel.disabled = false; }
         });
         row.appendChild(sel);
+
+        const actions = APP.el("div", { class: "actions" });
+        const editBtn = APP.el("button", { class: "iconbtn", text: "✏️" });
+        editBtn.title = "Edit job";
+        editBtn.addEventListener("click", () => startEdit(j));
+        const delBtn = APP.el("button", { class: "iconbtn danger", text: "🗑️" });
+        delBtn.title = "Delete job";
+        delBtn.addEventListener("click", () => deleteJob(j));
+        actions.appendChild(editBtn);
+        actions.appendChild(delBtn);
+        row.appendChild(actions);
+
         card.appendChild(row);
         listEl.appendChild(card);
       });
@@ -142,7 +207,15 @@ if (APP.checkPin()) {
     });
 
     document.getElementById("toggleAdd").addEventListener("click", () => {
-      document.getElementById("addForm").classList.toggle("open");
+      const form = document.getElementById("addForm");
+      const willOpen = !form.classList.contains("open") || editingId !== null;
+      if (willOpen) { resetForm(); form.classList.add("open"); }
+      else { form.classList.remove("open"); }
+    });
+
+    document.getElementById("formCancel").addEventListener("click", () => {
+      resetForm();
+      document.getElementById("addForm").classList.remove("open");
     });
 
     document.getElementById("jobSubmit").addEventListener("click", async () => {
@@ -150,28 +223,40 @@ if (APP.checkPin()) {
       if (!title) { APP.toast("Enter a job title", true); return; }
       const type = document.getElementById("jobType").value;
       const btn = document.getElementById("jobSubmit");
+      const isEdit = editingId !== null;
       btn.disabled = true; btn.textContent = "Saving…";
       const fields = {
         "Job": title,
-        "Type": type,
-        "Status": "To do"
+        "Type": type
       };
+      if (!isEdit) fields["Status"] = "To do";
+      // Block: set it when a Paddock Task has one chosen; explicitly clear it
+      // when switching to a Farm Task on an edit, since omitting the key
+      // leaves an existing link untouched.
       if (type === "Paddock Task" && jobBlockSelect.value) fields["Block"] = [jobBlockSelect.value];
-      if (document.getElementById("jobDue").value) fields["Due Date"] = document.getElementById("jobDue").value;
-      if (document.getElementById("jobAssigned").value) fields["Assigned To"] = document.getElementById("jobAssigned").value;
+      else if (isEdit) fields["Block"] = [];
+      fields["Due Date"] = document.getElementById("jobDue").value || (isEdit ? null : undefined);
+      fields["Assigned To"] = document.getElementById("jobAssigned").value || (isEdit ? "" : undefined);
+      Object.keys(fields).forEach(k => { if (fields[k] === undefined) delete fields[k]; });
       try {
-        const res = await APP.createRecords(APP.TABLES.jobs, [{ fields }]);
-        jobs.push(res.records[0]);
-        APP.toast("Job added ✓");
-        document.getElementById("jobTitle").value = "";
-        document.getElementById("jobDue").value = "";
-        document.getElementById("jobAssigned").value = "";
+        if (isEdit) {
+          await APP.updateRecords(APP.TABLES.jobs, [{ id: editingId, fields }]);
+          const j = jobs.find(x => x.id === editingId);
+          if (j) Object.assign(j.fields, fields);
+          APP.toast("Job updated ✓");
+        } else {
+          const res = await APP.createRecords(APP.TABLES.jobs, [{ fields }]);
+          jobs.push(res.records[0]);
+          APP.toast("Job added ✓");
+        }
+        resetForm();
         document.getElementById("addForm").classList.remove("open");
         render();
       } catch (err) {
-        console.error(err); APP.toast("Couldn't save job", true);
+        console.error(err); APP.toast(isEdit ? "Couldn't save changes" : "Couldn't save job", true);
       } finally {
-        btn.disabled = false; btn.textContent = "Add job";
+        btn.disabled = false;
+        btn.textContent = editingId !== null ? "Save changes" : "Add job";
       }
     });
   })();

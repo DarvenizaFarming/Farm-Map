@@ -18,6 +18,7 @@
   #controls { display:flex; align-items:center; gap:12px; margin-left:auto; flex-wrap:wrap; }
   #controls label { font-size:13px; display:flex; align-items:center; gap:5px; white-space:nowrap; cursor:pointer; }
   #controls select { font-size:13px; padding:3px 6px; border-radius:4px; border:none; }
+  #controls .count-badge { background:rgba(255,255,255,.25); border-radius:10px; padding:1px 7px; font-size:11px; font-weight:600; min-width:14px; text-align:center; display:inline-block; }
   #legend {
     position:absolute; bottom:20px; left:10px; z-index:1000;
     background:rgba(255,255,255,.95); padding:10px 12px; border-radius:8px;
@@ -60,7 +61,7 @@
         <option value="spray">Spray recency</option>
       </select>
     </label>
-    <label><input type="checkbox" id="showJobs" checked> 🛠️ Jobs</label>
+    <label><input type="checkbox" id="showJobs" checked> 🛠️ Jobs <span class="count-badge" id="jobCount">0</span></label>
     <label><input type="checkbox" id="showMobs" checked> 🐮 Mobs</label>
   </div>
 </div>
@@ -73,11 +74,13 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="app.js"></script>
 <script>
 const JOB_BOARD_URL = "jobs.html";
 const ROTATION_LOG_URL = "cattle.html";
 
 let map, geoLayer, jobLayerGroup, mobLayerGroup, paddockData, liveData;
+let jobsData = []; // flattened, live from Airtable: {paddock_id, job, type, priority, due, status, assigned, completed}
 let colorMode = 'crop';
 const paddockLayers = {}; // paddock_id -> leaflet layer (for centroid lookup)
 
@@ -155,11 +158,21 @@ function openPanel(feature){
     html += `<table><tr><th>N</th><th>P</th><th>K</th><th>S</th></tr><tr><td>${fmt(ft.N)}</td><td>${fmt(ft.P)}</td><td>${fmt(ft.K)}</td><td>${fmt(ft.S)}</td></tr></table>`;
     html += `<div class="sub">Last applied: ${p.fert_last_date || '—'} (${p.fert_count||0} applications)</div>`;
     html += `<h4>Spray</h4><div class="sub">Last sprayed: ${p.spray_last_date || 'No record'} (${p.spray_count||0} applications)</div>`;
-    const jobs = (liveData.jobs||[]).filter(j=>j.paddock_id===p.paddock_id);
-    if(jobs.length){
-      html += `<h4>🛠️ Open Jobs</h4><ul>`;
-      jobs.forEach(j=> html += `<li>${j.job} — ${j.priority||''} ${j.due?('(due '+j.due+')'):''}</li>`);
-      html += `</ul><div class="sub"><a href="${JOB_BOARD_URL}" target="_blank">Open Job Board →</a></div>`;
+    const paddockJobs = jobsData.filter(j=>j.paddock_id===p.paddock_id);
+    const activeJobs = paddockJobs.filter(j=>j.status!=='Done');
+    const doneJobs = paddockJobs.filter(j=>j.status==='Done');
+    if(activeJobs.length){
+      html += `<h4>🛠️ Active Jobs</h4><ul>`;
+      activeJobs.forEach(j=> html += `<li>${j.job} — ${j.status}${j.priority?(' · '+j.priority):''}${j.due?(' (due '+j.due+')'):''}</li>`);
+      html += `</ul>`;
+    }
+    if(doneJobs.length){
+      html += `<h4>✅ Completed Jobs</h4><ul>`;
+      doneJobs.forEach(j=> html += `<li>${j.job}${j.completed?(' (completed '+j.completed+')'):''}</li>`);
+      html += `</ul>`;
+    }
+    if(paddockJobs.length){
+      html += `<div class="sub"><a href="${JOB_BOARD_URL}" target="_blank">Open Job Board →</a></div>`;
     }
     const mobs = (liveData.mobs||[]).filter(m=>m.paddock_id===p.paddock_id);
     if(mobs.length){
@@ -199,8 +212,11 @@ function centroidOf(paddock_id){
 function rebuildIconLayers(){
   jobLayerGroup.clearLayers();
   mobLayerGroup.clearLayers();
+  const activeJobs = jobsData.filter(j=>j.status!=='Done');
+  const jobCountEl = document.getElementById('jobCount');
+  if(jobCountEl) jobCountEl.textContent = activeJobs.length;
   const jobsByPaddock = {};
-  (liveData.jobs||[]).forEach(j=>{ (jobsByPaddock[j.paddock_id] = jobsByPaddock[j.paddock_id]||[]).push(j); });
+  activeJobs.forEach(j=>{ if(!j.paddock_id) return; (jobsByPaddock[j.paddock_id] = jobsByPaddock[j.paddock_id]||[]).push(j); });
   Object.entries(jobsByPaddock).forEach(([pid, jobs])=>{
     const c = centroidOf(pid);
     if(!c) return;
@@ -238,10 +254,27 @@ function init(){
 
   Promise.all([
     fetch('paddocks.geojson').then(r=>r.json()),
-    fetch('live-data.json').then(r=>r.json())
-  ]).then(([geo, live])=>{
+    fetch('live-data.json').then(r=>r.json()),
+    APP.list(APP.TABLES.jobs, {"fields[]": ["Job","Type","Block","Status","Priority","Due Date","Assigned To","Completed Date"]}),
+    APP.list(APP.TABLES.blocks, {"fields[]": ["Block"]})
+  ]).then(([geo, live, jobsRaw, blocksRaw])=>{
     paddockData = geo;
     liveData = live;
+    const blockName = {};
+    blocksRaw.forEach(b=>{ blockName[b.id] = b.fields.Block; });
+    jobsData = jobsRaw.map(j=>{
+      const blockIds = j.fields.Block || [];
+      return {
+        paddock_id: blockIds.length ? blockName[blockIds[0]] : null,
+        job: j.fields.Job || '(untitled)',
+        type: j.fields.Type || '',
+        priority: j.fields.Priority || '',
+        due: j.fields['Due Date'] || '',
+        status: j.fields.Status || 'To do',
+        assigned: j.fields['Assigned To'] || '',
+        completed: j.fields['Completed Date'] || ''
+      };
+    });
     geoLayer = L.geoJSON(geo, {
       style: styleFor,
       onEachFeature: (feature, layer)=>{
@@ -258,8 +291,9 @@ function init(){
     rebuildLegend();
     rebuildIconLayers();
   }).catch(err=>{
+    console.error(err);
     document.getElementById('map').insertAdjacentHTML('afterbegin',
-      `<div style="padding:40px;font-family:sans-serif;color:#900">Could not load map data (paddocks.geojson / live-data.json). ${err}</div>`);
+      `<div style="padding:40px;font-family:sans-serif;color:#900">Could not load map data. ${err}</div>`);
   });
 
   document.getElementById('colorMode').addEventListener('change', (e)=>{
@@ -274,7 +308,7 @@ function init(){
     if(e.target.checked) map.addLayer(mobLayerGroup); else map.removeLayer(mobLayerGroup);
   });
 }
-init();
+if (APP.checkPin()) { init(); }
 </script>
 </body>
 </html>

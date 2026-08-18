@@ -93,6 +93,12 @@ const APP = (function () {
     return apiFetch(tableId, { method: "PATCH", body: JSON.stringify({ records, typecast: true }) });
   }
 
+  async function deleteRecords(tableId, recordIds) {
+    // recordIds: array of record id strings (Airtable allows up to 10 per call)
+    const qs = recordIds.map(id => "records[]=" + encodeURIComponent(id)).join("&");
+    return apiFetch(tableId + "?" + qs, { method: "DELETE" });
+  }
+
   // ---- Small UI helpers -------------------------------------------------------
   function el(tag, attrs, children) {
     const e = document.createElement(tag);
@@ -120,5 +126,5 @@ const APP = (function () {
     return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
   }
 
-  return { checkPin, list, createRecords, updateRecords, TABLES, el, toast, todayISO };
+  return { checkPin, list, createRecords, updateRecords, deleteRecords, TABLES, el, toast, todayISO };
 })();
