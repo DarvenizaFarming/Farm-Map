@@ -6,7 +6,7 @@ const APP = (function () {
   "use strict";
 
   // ---- Config -------------------------------------------------------
-  const API_KEY = "patER9qoNWV9sFFdI.958d9ece0f6f1609deeb9ca0018b0ab93ae71e5c25ffbe16db5134f331611935";
+  const API_KEY = "patlpK1J5jlspt3l7.3ea86471e62b492ee4da782da41980140d38a29f60e05d97607ea3f2811e7bb6";
   const BASE_ID = "appqwWfRyJQ72H6On";
   const PIN = "1420"; // change this to whatever you like - it's just a light deterrent, not real security
 
