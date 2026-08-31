@@ -99,7 +99,7 @@ if (APP.checkPin()) {
         APP.list(APP.TABLES.consignmentLines, { "fields[]": ["Production Area", "Cartons", "Gross Income", "Variety", "Con #", "Date"] }),
         APP.list(APP.TABLES.consignments, { "fields[]": ["Con #", "Paid", "Buyer"] }),
         APP.list(APP.TABLES.buyers, { "fields[]": ["Buyer"] }),
-        APP.list(APP.TABLES.bagging, { "fields[]": ["Week Of", "Bags"] }),
+        APP.list(APP.TABLES.bagging, { "fields[]": ["Week Of", "Bags", "Bag Colour"] }),
         APP.list(APP.TABLES.picking, { "fields[]": ["Week Of", "Bunches"] }),
         APP.list(APP.TABLES.weeklyBananaSummary, { "fields[]": ["Week Of", "Bunches Picked", "Cartons Sold", "Cartons per Bunch"] })
       ]);
@@ -119,10 +119,21 @@ if (APP.checkPin()) {
       });
 
       // ---- Week series (bagging/picking - bananas only) ----
-      const bagsByWeek = {}, bunchesByWeek = {};
-      bagging.forEach(r => { const w = r.fields["Week Of"]; if (w) bagsByWeek[w] = (bagsByWeek[w] || 0) + (r.fields.Bags || 0); });
+      const bagsByWeek = {}, bunchesByWeek = {}, colourByWeek = {};
+      bagging.forEach(r => {
+        const w = r.fields["Week Of"];
+        if (!w) return;
+        bagsByWeek[w] = (bagsByWeek[w] || 0) + (r.fields.Bags || 0);
+        const colour = r.fields["Bag Colour"];
+        if (colour) colourByWeek[w] = colour; // one colour per week — last one seen wins
+      });
       picking.forEach(r => { const w = r.fields["Week Of"]; if (w) bunchesByWeek[w] = (bunchesByWeek[w] || 0) + (r.fields.Bunches || 0); });
       const allWeeks = Array.from(new Set([...Object.keys(bagsByWeek), ...Object.keys(bunchesByWeek)])).sort();
+      const BAG_COLOUR_HEX = {
+        Blue: "#1e88e5", Yellow: "#fdd835", Red: "#e53935", Green: "#43a047",
+        White: "#ffffff", Purple: "#8e24aa", Orange: "#fb8c00"
+      };
+      function bagColourHex(name) { return BAG_COLOUR_HEX[name] || "#9e9e9e"; }
 
       // ---- Weekly Banana Summary series (Cartons per Bunch trend) ----
       const wbsSorted = wbs.slice().sort((a, b) => (a.fields["Week Of"] || "").localeCompare(b.fields["Week Of"] || ""));
@@ -226,7 +237,18 @@ if (APP.checkPin()) {
 
         if (!cropFilter || cropFilter === "Bananas") {
           html += `<div class="chartcard"><h3>Cartons per Bunch — weekly trend${rangeActive ? "" : " (all time)"}</h3><canvas id="c4" height="200"></canvas></div>`;
-          html += `<div class="chartcard"><h3>Bags &amp; bunches per week${rangeActive ? "" : " (last 26 weeks)"}</h3><canvas id="c3" height="200"></canvas></div>`;
+          const latestWeekWithColour = Object.keys(colourByWeek).sort().pop();
+          const latestColour = latestWeekWithColour ? colourByWeek[latestWeekWithColour] : null;
+          html += `
+            <div class="chartcard">
+              <h3>Bags &amp; bunches per week${rangeActive ? "" : " (last 26 weeks)"}</h3>
+              ${latestColour ? `<div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#666;margin:-4px 0 10px;">
+                <span style="width:12px;height:12px;border-radius:3px;display:inline-block;background:${bagColourHex(latestColour)};border:1px solid rgba(0,0,0,.25);"></span>
+                Current bag colour: <strong>${latestColour}</strong> (wk of ${latestWeekWithColour})
+              </div>` : ''}
+              <canvas id="c3" height="200"></canvas>
+            </div>
+          `;
         }
 
         // Variety table
@@ -335,11 +357,21 @@ if (APP.checkPin()) {
             data: {
               labels: weeksInScope,
               datasets: [
-                { label: "Bags", data: weeksInScope.map(w => bagsByWeek[w] || 0), backgroundColor: "#1b3a2b" },
+                {
+                  label: "Bags", data: weeksInScope.map(w => bagsByWeek[w] || 0),
+                  backgroundColor: weeksInScope.map(w => colourByWeek[w] ? bagColourHex(colourByWeek[w]) : "#1b3a2b"),
+                  borderColor: weeksInScope.map(w => colourByWeek[w] === "White" ? "#999" : (colourByWeek[w] ? bagColourHex(colourByWeek[w]) : "#1b3a2b")),
+                  borderWidth: 1
+                },
                 { label: "Bunches picked", data: weeksInScope.map(w => bunchesByWeek[w] || 0), backgroundColor: "#f5c518" }
               ]
             },
-            options: { scales: { y: { beginAtZero: true } } }
+            options: {
+              scales: { y: { beginAtZero: true } },
+              plugins: { tooltip: { callbacks: {
+                afterLabel: (ctx) => ctx.datasetIndex === 0 && colourByWeek[ctx.label] ? "Bag colour: " + colourByWeek[ctx.label] : ""
+              } } }
+            }
           }));
         }
       }

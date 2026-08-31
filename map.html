@@ -81,8 +81,14 @@ const ROTATION_LOG_URL = "cattle.html";
 
 let map, geoLayer, jobLayerGroup, mobLayerGroup, paddockData, liveData;
 let jobsData = []; // flattened, live from Airtable: {paddock_id, job, type, priority, due, status, assigned, completed}
+let baggingByPaddock = {}; // paddock_id -> {week, bags, colour} for the most recent recorded week
 let colorMode = 'crop';
 const paddockLayers = {}; // paddock_id -> leaflet layer (for centroid lookup)
+
+const BAG_COLOUR_HEX = {
+  Blue:'#1e88e5', Yellow:'#fdd835', Red:'#e53935', Green:'#43a047',
+  White:'#ffffff', Purple:'#8e24aa', Orange:'#fb8c00'
+};
 
 const CROP_COLORS = {
   banana:'#f5c518', papaya:'#ff8c42', passion:'#7b3f9e', pumpkin:'#d2691e',
@@ -180,6 +186,11 @@ function openPanel(feature){
       mobs.forEach(m=> html += `<li>${m.mob} — since ${m.since}</li>`);
       html += `</ul><div class="sub"><a href="${ROTATION_LOG_URL}" target="_blank">Open Rotation Log →</a></div>`;
     }
+    const bg = baggingByPaddock[p.paddock_id];
+    if(bg){
+      const swatch = bg.colour ? `<span style="width:12px;height:12px;border-radius:3px;display:inline-block;background:${BAG_COLOUR_HEX[bg.colour]||'#9e9e9e'};border:1px solid rgba(0,0,0,.25);margin-right:5px;vertical-align:-1px;"></span>` : '';
+      html += `<h4>🍌 Bagging</h4><div class="sub">${bg.bags} bags — wk of ${bg.week}${bg.colour ? ` &middot; ${swatch}${bg.colour}` : ''}</div>`;
+    }
     body.innerHTML = html;
   }
   panel.classList.add('open');
@@ -256,8 +267,9 @@ function init(){
     fetch('paddocks.geojson').then(r=>r.json()),
     fetch('live-data.json').then(r=>r.json()),
     APP.list(APP.TABLES.jobs, {"fields[]": ["Job","Type","Block","Status","Priority","Due Date","Assigned To","Completed Date"]}),
-    APP.list(APP.TABLES.blocks, {"fields[]": ["Block"]})
-  ]).then(([geo, live, jobsRaw, blocksRaw])=>{
+    APP.list(APP.TABLES.blocks, {"fields[]": ["Block"]}),
+    APP.list(APP.TABLES.bagging, {"fields[]": ["Week Of","Bags","Block","Bag Colour"]})
+  ]).then(([geo, live, jobsRaw, blocksRaw, baggingRaw])=>{
     paddockData = geo;
     liveData = live;
     const blockName = {};
@@ -274,6 +286,24 @@ function init(){
         assigned: j.fields['Assigned To'] || '',
         completed: j.fields['Completed Date'] || ''
       };
+    });
+    // Keep only the most recent recorded week per paddock (sum bags if a week is split across multiple records).
+    baggingByPaddock = {};
+    baggingRaw.forEach(r=>{
+      const week = r.fields['Week Of'];
+      const blockIds = r.fields.Block || [];
+      if(!week || !blockIds.length) return;
+      blockIds.forEach(bid=>{
+        const pid = blockName[bid];
+        if(!pid) return;
+        const existing = baggingByPaddock[pid];
+        if(!existing || week > existing.week){
+          baggingByPaddock[pid] = { week, bags: r.fields.Bags || 0, colour: r.fields['Bag Colour'] || null };
+        } else if(week === existing.week){
+          existing.bags += (r.fields.Bags || 0);
+          if(!existing.colour) existing.colour = r.fields['Bag Colour'] || null;
+        }
+      });
     });
     geoLayer = L.geoJSON(geo, {
       style: styleFor,
