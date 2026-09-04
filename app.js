@@ -6,8 +6,9 @@ const APP = (function () {
   "use strict";
 
   // ---- Config -------------------------------------------------------
-  const API_KEY = "patlpK1J5jlspt3l7.3ea86471e62b492ee4da782da41980140d38a29f60e05d97607ea3f2811e7bb6";
-  const BASE_ID = "appqwWfRyJQ72H6On";
+  // Requests go through a Cloudflare Worker proxy, which holds the real Airtable
+  // token server-side (as a Worker Secret) so it never ships to the browser or GitHub.
+  const WORKER_URL = "https://wispy-water-f284.williamdarveniza95.workers.dev";
   const PIN = "1420"; // change this to whatever you like - it's just a light deterrent, not real security
 
   const TABLES = {
@@ -29,7 +30,7 @@ const APP = (function () {
     weeklyBananaSummary: "tblC18gzxl1kJ3fwD"
   };
 
-  const API_ROOT = "https://api.airtable.com/v0/" + BASE_ID + "/";
+  const API_ROOT = WORKER_URL + "/";
 
   // ---- PIN gate -------------------------------------------------------
   function checkPin() {
@@ -47,7 +48,7 @@ const APP = (function () {
   async function apiFetch(path, options) {
     options = options || {};
     options.headers = Object.assign(
-      { "Authorization": "Bearer " + API_KEY, "Content-Type": "application/json" },
+      { "Content-Type": "application/json" },
       options.headers || {}
     );
     const res = await fetch(API_ROOT + path, options);
